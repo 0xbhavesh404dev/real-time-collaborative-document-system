@@ -51,6 +51,8 @@ npm run dev
 
 Open `http://localhost:5173`.
 
+If the API reports that the port is already in use, keep the existing backend process and open the frontend in the browser. The backend health check is available at `http://localhost:5000/api/health`.
+
 ## Architecture and database
 
 React communicates with Express over REST for accounts and stored resources. Socket.IO carries live operations and awareness events. The server uses a `TextCRDT` instance per active document and persists JSONB state plus operation history. See [docs/architecture.md](docs/architecture.md), [docs/database-design.md](docs/database-design.md), and [docs/api.md](docs/api.md).
