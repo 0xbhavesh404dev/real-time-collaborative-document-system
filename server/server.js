@@ -20,7 +20,7 @@ const io = new Server(httpServer, {
 app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 app.get('/', (_req, res) => res.redirect(process.env.CLIENT_URL || 'http://localhost:5173'));
-app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+app.get('/api/health', (_req, res) => res.json({ status: 'ok', service: 'collab-docs-server' }));
 app.use('/api/auth', authRouter);
 app.use('/api/channels', channelRouter);
 app.use('/api', documentRouter);
