@@ -107,3 +107,9 @@ test('ignores duplicate pending operations', () => {
   assert.equal(crdt.applyOperation(operation), false);
   assert.equal(Object.keys(crdt.pendingOperations).length, 1);
 });
+
+test('generates sequential client operation ids', () => {
+  const crdt = new TextCRDT();
+  assert.equal(crdt.generateId('clientA'), 'clientA:1');
+  assert.equal(crdt.generateId('clientA'), 'clientA:2');
+});
