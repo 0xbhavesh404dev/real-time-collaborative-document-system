@@ -28,4 +28,6 @@ Protected requests should use the current user's token; user IDs are never trust
 | GET | `/api/versions/:id` | Preview one snapshot |
 | POST | `/api/versions/:id/restore` | Restore through CRDT and create new snapshot |
 
+Successful restore responses include both the new version and `restoredContent` so connected editors can update their visible state.
+
 Socket events include `join-document`, `leave-document`, `crdt-operation`, `cursor-move`, `typing-start`, and `typing-stop`. Server events include `initial-document`, `crdt-operation`, `user-joined`, `user-left`, `user-typing`, `user-stopped-typing`, and `error`.
