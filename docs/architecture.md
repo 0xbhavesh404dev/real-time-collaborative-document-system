@@ -14,6 +14,8 @@ PostgreSQL
 
 REST is used for authentication, channels, documents, and version snapshots. Socket.IO is used for live document rooms, CRDT operations, presence, cursor awareness, and typing indicators.
 
+The browser uses port `5173` for React, while the API and Socket.IO server use port `5000`.
+
 ## Components
 
 - `client`: React pages and the simple textarea editor.
