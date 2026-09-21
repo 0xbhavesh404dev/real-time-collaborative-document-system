@@ -10,6 +10,7 @@ export default function HistoryPanel({ user }) {
   const [restoringId, setRestoringId] = useState(null);
 
   async function loadVersions() {
+    setError('');
     try {
       const result = await apiFetch(`/documents/${documentId}/versions?updated=${Date.now()}`);
       setVersions(result.versions);
