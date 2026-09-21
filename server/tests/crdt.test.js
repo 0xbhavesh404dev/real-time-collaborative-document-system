@@ -99,3 +99,11 @@ test('rejects malformed operations', () => {
   assert.equal(crdt.applyOperation({ type: 'unknown', id: 'A:1' }), false);
   assert.equal(crdt.applyOperation({ type: 'insert', id: 'A:1', leftId: 'HEAD' }), false);
 });
+
+test('ignores duplicate pending operations', () => {
+  const crdt = new TextCRDT();
+  const operation = createInsertOperation({ id: 'B:1', leftId: 'A:1', value: 'x' });
+  assert.equal(crdt.applyOperation(operation), false);
+  assert.equal(crdt.applyOperation(operation), false);
+  assert.equal(Object.keys(crdt.pendingOperations).length, 1);
+});

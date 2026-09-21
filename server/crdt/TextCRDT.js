@@ -30,6 +30,9 @@ export class TextCRDT {
     }
 
     if (operation.type === 'insert') {
+      if (typeof operation.value !== 'string' || operation.value.length !== 1) {
+        return false;
+      }
       return this.applyInsert(operation);
     }
 
@@ -41,7 +44,7 @@ export class TextCRDT {
   }
 
   applyInsert(operation) {
-    if (this.nodes[operation.id]) {
+    if (this.nodes[operation.id] || this.pendingOperations[operation.id]) {
       return false;
     }
 
