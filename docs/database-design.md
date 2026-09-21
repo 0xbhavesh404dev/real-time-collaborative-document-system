@@ -11,3 +11,5 @@
 A user can belong to many channels. A channel contains many documents. A document has many operations and versions. Foreign keys use cascading deletes for channel-owned data and restricted deletes for historical authors.
 
 `current_content` makes normal reads simple. `crdt_state` lets an active CRDT resume, and `document_operations` provides an operation audit trail.
+
+Indexes on memberships, channel documents, operations, and versions keep the common list and history queries efficient without adding an ORM.
