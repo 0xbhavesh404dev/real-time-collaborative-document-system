@@ -22,6 +22,8 @@ React, Vite, JavaScript, JSX, React Router, Fetch API, Socket.IO client, Node.js
 
 ## Setup
 
+For feature work, use the `bhavesh-feature` branch so changes stay separate from `main`.
+
 1. Install Node.js, PostgreSQL, and npm.
 2. Create the database:
 
