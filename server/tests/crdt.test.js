@@ -76,3 +76,9 @@ test('validates the simple operation format', () => {
 test('returns empty text for a new CRDT', () => {
   assert.equal(new TextCRDT().getText(), '');
 });
+
+test('ignores deletion for an unknown node', () => {
+  const crdt = new TextCRDT();
+  assert.equal(crdt.delete('missing'), false);
+  assert.equal(crdt.getText(), '');
+});
