@@ -92,3 +92,10 @@ test('preserves tombstones after serialization', () => {
   assert.equal(restored.nodes['A:1'].deleted, true);
   assert.equal(restored.getText(), '');
 });
+
+test('rejects malformed operations', () => {
+  const crdt = new TextCRDT();
+  assert.equal(crdt.applyOperation(null), false);
+  assert.equal(crdt.applyOperation({ type: 'unknown', id: 'A:1' }), false);
+  assert.equal(crdt.applyOperation({ type: 'insert', id: 'A:1', leftId: 'HEAD' }), false);
+});
