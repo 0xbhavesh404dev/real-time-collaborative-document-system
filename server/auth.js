@@ -47,7 +47,8 @@ router.post('/register', async (req, res) => {
   }
 
   try {
-    const existingUser = await query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
+    const normalizedEmail = email.toLowerCase().trim();
+    const existingUser = await query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
     if (existingUser.rowCount > 0) {
       return res.status(409).json({ message: 'Email already registered' });
     }
@@ -57,7 +58,7 @@ router.post('/register', async (req, res) => {
       `INSERT INTO users (username, email, password_hash)
        VALUES ($1, $2, $3)
        RETURNING id, username, email`,
-      [username.trim(), email.toLowerCase().trim(), passwordHash]
+      [username.trim(), normalizedEmail, passwordHash]
     );
     const user = result.rows[0];
 
