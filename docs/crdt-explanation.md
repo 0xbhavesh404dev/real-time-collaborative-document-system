@@ -27,6 +27,8 @@ For example, operations `A:1` and `B:1` both after `H` are rendered as `A:1` the
 
 An insert whose `leftId` has not arrived is held in `pendingOperations`. It is applied when the dependency appears. An operation id already present in `nodes` or `pendingOperations` is ignored, providing idempotency.
 
+The implementation also validates that insert operations contain exactly one character before adding them to the state.
+
 ## Persistence and transport
 
 Socket.IO transports operations to the server and other document-room clients. PostgreSQL stores both the materialized `current_content` and serialized `crdt_state`, while `document_operations` stores operation history.
