@@ -1,6 +1,7 @@
 # API Reference
 
 All routes except registration and login require `Authorization: Bearer <token>`.
+Protected requests should use the current user's token; user IDs are never trusted from the request body.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
