@@ -72,3 +72,7 @@ test('validates the simple operation format', () => {
   assert.equal(isValidOperation({ type: 'insert', id: 'A:1', leftId: 'HEAD', value: 'ab' }), false);
   assert.equal(isValidOperation({ type: 'delete', id: 'A:1' }), true);
 });
+
+test('returns empty text for a new CRDT', () => {
+  assert.equal(new TextCRDT().getText(), '');
+});
