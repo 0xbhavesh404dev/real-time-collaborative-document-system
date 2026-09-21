@@ -34,6 +34,7 @@ export default function Dashboard({ user, onLogout }) {
   async function joinChannel() {
     const channelName = window.prompt('Enter the channel name to join, for example: trial2');
     if (!channelName) return;
+    setError('');
     try {
       await apiFetch('/channels/join-by-name', { method: 'POST', body: JSON.stringify({ name: channelName }) });
       loadChannels();
