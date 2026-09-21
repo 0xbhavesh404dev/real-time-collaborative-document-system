@@ -82,3 +82,13 @@ test('ignores deletion for an unknown node', () => {
   assert.equal(crdt.delete('missing'), false);
   assert.equal(crdt.getText(), '');
 });
+
+test('preserves tombstones after serialization', () => {
+  const crdt = new TextCRDT();
+  crdt.applyOperation(createInsertOperation({ id: 'A:1', value: 'x' }));
+  crdt.delete('A:1');
+  const restored = new TextCRDT();
+  restored.loadState(JSON.parse(JSON.stringify(crdt.getState())));
+  assert.equal(restored.nodes['A:1'].deleted, true);
+  assert.equal(restored.getText(), '');
+});
