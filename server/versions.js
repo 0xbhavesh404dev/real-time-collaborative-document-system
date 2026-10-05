@@ -3,7 +3,8 @@ import { query } from './db.js';
 import { requireAuth } from './auth.js';
 import { canEdit, findDocument } from './documents.js';
 import { getActiveCRDT } from './crdt/crdtStore.js';
-import { broadcastDocumentOperation } from './socketHandler.js';
+import { broadcastDocumentOperation, broadcastDocumentRestored } from './socketHandler.js';
+import { TextCRDT } from './crdt/TextCRDT.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -86,10 +87,10 @@ router.post('/versions/:id/restore', async (req, res) => {
     if (!canEdit(document.role)) {
       return res.status(403).json({ message: 'You do not have permission to restore a version' });
     }
-    const crdt = getActiveCRDT(version.document_id, document.crdt_state);
-    const visibleNodes = crdt.getVisibleNodes();
-    const operations = visibleNodes.map((node) => ({ type: 'delete', id: node.id }));
-    let leftId = visibleNodes.at(-1)?.id || 'HEAD';
+
+    // Build fresh CRDT for the restored snapshot
+    const crdt = new TextCRDT();
+    let leftId = 'HEAD';
     const restoreClientId = `restore:${req.user.id}:${Date.now()}`;
     for (const [index, value] of [...version.content_snapshot].entries()) {
       const operation = {
@@ -98,29 +99,38 @@ router.post('/versions/:id/restore', async (req, res) => {
         leftId,
         value
       };
-      operations.push(operation);
+      crdt.applyOperation(operation);
       leftId = operation.id;
     }
-    operations.forEach((operation) => crdt.applyOperation(operation));
-    await query(
-      `INSERT INTO document_operations (document_id, operation_id, user_id, operation_type, operation_data)
-       SELECT $1, operation->>'id', $2, operation->>'type', operation
-       FROM jsonb_array_elements($3::jsonb) AS operation
-       ON CONFLICT (document_id, operation_id) DO NOTHING`,
-      [version.document_id, req.user.id, JSON.stringify(operations)]
-    );
+
+    // Update active memory CRDT
+    const activeCrdt = getActiveCRDT(version.document_id, document.crdt_state);
+    activeCrdt.loadState(crdt.getState());
+
+    // Update DB
     await query(
       `UPDATE documents SET current_content = $1, crdt_state = $2, updated_at = NOW() WHERE id = $3`,
       [crdt.getText(), crdt.getState(), version.document_id]
     );
-    operations.forEach((operation) => broadcastDocumentOperation(version.document_id, operation));
+
+    // Save version history record
     const result = await query(
       `INSERT INTO versions (document_id, user_id, content_snapshot, message)
        VALUES ($1, $2, $3, $4) RETURNING *`,
       [version.document_id, req.user.id, version.content_snapshot, `Restored from version ${version.id}`]
     );
-    return res.json({ version: result.rows[0], restoredContent: version.content_snapshot });
-  } catch {
+
+    // Broadcast to all active clients in document room
+    broadcastDocumentRestored(version.document_id, {
+      title: document.title,
+      content: crdt.getText(),
+      state: crdt.getState(),
+      version: result.rows[0]
+    });
+
+    return res.json({ version: result.rows[0], restoredContent: version.content_snapshot, crdtState: crdt.getState() });
+  } catch (err) {
+    console.error('Error restoring version:', err);
     return res.status(500).json({ message: 'Unable to restore version' });
   }
 });

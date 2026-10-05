@@ -164,6 +164,10 @@ export function broadcastDocumentOperation(documentId, operation) {
   socketServer?.to(roomName(documentId)).emit('crdt-operation', { documentId, operation });
 }
 
+export function broadcastDocumentRestored(documentId, payload) {
+  socketServer?.to(roomName(documentId)).emit('document-restored', { documentId, ...payload });
+}
+
 function leaveDocument(socket, documentId, io) {
   const key = String(documentId);
   if (!socket.data.documents.has(key)) return;
