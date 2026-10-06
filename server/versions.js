@@ -10,7 +10,7 @@ const router = express.Router();
 router.use(requireAuth);
 
 router.post('/documents/:id/versions', async (req, res) => {
-  const { message, content } = req.body;
+  const { message, content, contentHtml } = req.body;
   if (!message?.trim()) {
     return res.status(400).json({ message: 'Version message is required' });
   }
@@ -23,10 +23,10 @@ router.post('/documents/:id/versions', async (req, res) => {
       return res.status(403).json({ message: 'You do not have permission to save a version' });
     }
     const result = await query(
-      `INSERT INTO versions (document_id, user_id, content_snapshot, message)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, document_id, user_id, content_snapshot, message, created_at`,
-      [req.params.id, req.user.id, content ?? document.current_content, message.trim()]
+      `INSERT INTO versions (document_id, user_id, content_snapshot, content_html, message)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, document_id, user_id, content_snapshot, content_html, message, created_at`,
+      [req.params.id, req.user.id, content ?? document.current_content, contentHtml ?? document.formatted_content, message.trim()]
     );
     return res.status(201).json({ version: result.rows[0] });
   } catch {
@@ -109,26 +109,27 @@ router.post('/versions/:id/restore', async (req, res) => {
 
     // Update DB
     await query(
-      `UPDATE documents SET current_content = $1, crdt_state = $2, updated_at = NOW() WHERE id = $3`,
-      [crdt.getText(), crdt.getState(), version.document_id]
+      `UPDATE documents SET current_content = $1, formatted_content = $2, crdt_state = $3, updated_at = NOW() WHERE id = $4`,
+      [crdt.getText(), version.content_html || '', crdt.getState(), version.document_id]
     );
 
     // Save version history record
     const result = await query(
-      `INSERT INTO versions (document_id, user_id, content_snapshot, message)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [version.document_id, req.user.id, version.content_snapshot, `Restored from version ${version.id}`]
+      `INSERT INTO versions (document_id, user_id, content_snapshot, content_html, message)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [version.document_id, req.user.id, version.content_snapshot, version.content_html || '', `Restored from version ${version.id}`]
     );
 
     // Broadcast to all active clients in document room
     broadcastDocumentRestored(version.document_id, {
       title: document.title,
       content: crdt.getText(),
+      contentHtml: version.content_html || '',
       state: crdt.getState(),
       version: result.rows[0]
     });
 
-    return res.json({ version: result.rows[0], restoredContent: version.content_snapshot, crdtState: crdt.getState() });
+    return res.json({ version: result.rows[0], restoredContent: version.content_snapshot, restoredHtml: version.content_html || '', crdtState: crdt.getState() });
   } catch (err) {
     console.error('Error restoring version:', err);
     return res.status(500).json({ message: 'Unable to restore version' });

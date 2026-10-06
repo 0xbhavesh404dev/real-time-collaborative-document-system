@@ -55,15 +55,19 @@ function operationsForChange(oldText, newText, state, clientId, nextId) {
 export default function Editor({ user }) {
   const { documentId } = useParams();
   const socketRef = useRef(null);
-  const textareaRef = useRef(null);
+  const editorSurfaceRef = useRef(null);
+  const selectionRef = useRef(null);
   const stateRef = useRef({ nodes: {}, pendingOperations: {} });
   const textRef = useRef('');
   const clientId = useRef(localStorage.getItem('collab_client_id') || crypto.randomUUID());
   const counter = useRef(0);
   const typingTimer = useRef(null);
+  const operationQueueRef = useRef([]);
+  const isSendingOperationRef = useRef(false);
 
   const [document, setDocument] = useState(null);
   const [text, setText] = useState('');
+  const [formattedContent, setFormattedContent] = useState('');
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [typingUser, setTypingUser] = useState('');
   const [remoteCursors, setRemoteCursors] = useState([]);
@@ -77,13 +81,26 @@ export default function Editor({ user }) {
   }, []);
 
   useEffect(() => {
+    const editorSurface = editorSurfaceRef.current;
+    if (editorSurface && globalThis.document.activeElement !== editorSurface) {
+      if (formattedContent && editorSurface.innerHTML !== formattedContent) {
+        editorSurface.innerHTML = formattedContent;
+      } else if (!formattedContent && editorSurface.innerText !== text) {
+        editorSurface.textContent = text;
+      }
+    }
+  }, [text, formattedContent]);
+
+  useEffect(() => {
     let active = true;
 
     apiFetch(`/documents/${documentId}`)
       .then((result) => {
         if (active) setDocument(result.document);
       })
-      .catch((requestError) => setError(requestError.message));
+      .catch((requestError) => {
+        if (active) setError(requestError.message);
+      });
 
     const socket = createSocket();
     socketRef.current = socket;
@@ -91,11 +108,15 @@ export default function Editor({ user }) {
     socket.on('connect', () => {
       socket.emit('join-document', { documentId });
     });
+    socket.on('connect_error', (socketError) => {
+      if (active) setError(socketError.message || 'Unable to connect to the live document');
+    });
 
     socket.on('initial-document', (payload) => {
       stateRef.current = payload.state || { nodes: {}, pendingOperations: {} };
       textRef.current = payload.content || '';
       setText(payload.content || '');
+      setFormattedContent(payload.formattedContent || '');
       setDocument((current) => ({
         ...current,
         title: payload.title,
@@ -112,6 +133,7 @@ export default function Editor({ user }) {
       stateRef.current = payload.state || { nodes: {}, pendingOperations: {} };
       textRef.current = payload.content || '';
       setText(payload.content || '');
+      setFormattedContent(payload.contentHtml || '');
       setError('');
       setSaveSuccess(`Restored version: ${payload.version?.message || 'Updated'}`);
       setTimeout(() => setSaveSuccess(''), 4000);
@@ -128,6 +150,12 @@ export default function Editor({ user }) {
         cursor
       ]);
     });
+    socket.on('formatting-update', ({ contentHtml }) => {
+      setFormattedContent(contentHtml || '');
+      if (editorSurfaceRef.current && globalThis.document.activeElement !== editorSurfaceRef.current) {
+        editorSurfaceRef.current.innerHTML = contentHtml || textRef.current;
+      }
+    });
     socket.on('error', (payload) => setError(payload.message));
 
     const localRestoreListener = async () => {
@@ -136,6 +164,7 @@ export default function Editor({ user }) {
         stateRef.current = result.document.crdt_state || { nodes: {}, pendingOperations: {} };
         textRef.current = result.document.current_content || '';
         setText(result.document.current_content || '');
+        setFormattedContent(result.document.formatted_content || '');
       } catch (requestError) {
         setError(requestError.message);
       }
@@ -197,26 +226,19 @@ export default function Editor({ user }) {
 
     const nextText = visibleNodes(state).map((node) => node.value).join('');
 
-    // Preserve selection in textarea
-    const textarea = textareaRef.current;
-    const isFocused = document.activeElement === textarea;
-    const selectionStart = textarea ? textarea.selectionStart : 0;
-    const selectionEnd = textarea ? textarea.selectionEnd : 0;
-
     textRef.current = nextText;
     setText(nextText);
-
-    if (textarea && isFocused) {
-      requestAnimationFrame(() => {
-        textarea.setSelectionRange(selectionStart, selectionEnd);
-      });
+    const editorSurface = editorSurfaceRef.current;
+    if (editorSurface && globalThis.document.activeElement !== editorSurface) {
+      editorSurface.innerHTML = formattedContent || nextText;
     }
   }
 
   function handleChange(event) {
     if (!document || !['admin', 'editor'].includes(document.role)) return;
     setError('');
-    const newText = event.target.value;
+    const newText = event.currentTarget.innerText;
+    setFormattedContent(event.currentTarget.innerHTML);
     const operations = operationsForChange(
       textRef.current,
       newText,
@@ -230,7 +252,12 @@ export default function Editor({ user }) {
 
     operations.forEach((operation) => {
       applyOperation(operation);
-      socketRef.current?.emit('crdt-operation', { documentId, operation });
+      operationQueueRef.current.push(operation);
+    });
+    flushOperationQueue();
+    socketRef.current?.emit('formatting-update', {
+      documentId,
+      contentHtml: event.currentTarget.innerHTML
     });
 
     socketRef.current?.emit('typing-start', { documentId });
@@ -241,11 +268,84 @@ export default function Editor({ user }) {
     );
   }
 
+  function flushOperationQueue() {
+    if (isSendingOperationRef.current || operationQueueRef.current.length === 0) return;
+    const socket = socketRef.current;
+    const operation = operationQueueRef.current[0];
+    if (!socket?.connected) {
+      setError('Connection lost. Reconnect before continuing to edit.');
+      return;
+    }
+
+    isSendingOperationRef.current = true;
+    socket.emit('crdt-operation', { documentId, operation }, (response) => {
+      isSendingOperationRef.current = false;
+      if (!response?.ok) {
+        operationQueueRef.current = [];
+        resyncDocument(response?.message || 'Unable to sync this edit');
+        return;
+      }
+      operationQueueRef.current.shift();
+      flushOperationQueue();
+    });
+  }
+
+  async function resyncDocument(message) {
+    try {
+      const result = await apiFetch(`/documents/${documentId}`);
+      const nextState = result.document.crdt_state || { nodes: {}, pendingOperations: {} };
+      const nextText = result.document.current_content || '';
+      stateRef.current = nextState;
+      textRef.current = nextText;
+      setText(nextText);
+      setFormattedContent(result.document.formatted_content || '');
+      if (editorSurfaceRef.current && globalThis.document.activeElement !== editorSurfaceRef.current) {
+        editorSurfaceRef.current.innerHTML = result.document.formatted_content || nextText;
+      }
+      setError(`${message}. Document refreshed; please try that edit again.`);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
   function sendCursor(event) {
+    const selection = window.getSelection();
+    if (selection?.rangeCount) selectionRef.current = selection.getRangeAt(0).cloneRange();
     socketRef.current?.emit('cursor-move', {
       documentId,
-      position: event.target.selectionStart
+      position: selection?.rangeCount ? selection.getRangeAt(0).startOffset : event.currentTarget.innerText.length
     });
+  }
+
+  function saveSelection() {
+    const selection = window.getSelection();
+    if (selection?.rangeCount && editorSurfaceRef.current?.contains(selection.anchorNode)) {
+      selectionRef.current = selection.getRangeAt(0).cloneRange();
+    }
+  }
+
+  function restoreSelection() {
+    const editorSurface = editorSurfaceRef.current;
+    const selection = window.getSelection();
+    if (!editorSurface || !selectionRef.current) return;
+    if (!editorSurface.contains(selectionRef.current.startContainer)) return;
+    selection.removeAllRanges();
+    selection.addRange(selectionRef.current);
+  }
+
+  function applyFormat(command, value = null) {
+    if (readOnly) return;
+    restoreSelection();
+    globalThis.document.execCommand('styleWithCSS', false, true);
+    const applied = globalThis.document.execCommand(command, false, value);
+    if (!applied && command === 'hiliteColor') {
+      globalThis.document.execCommand('backColor', false, value);
+    }
+    editorSurfaceRef.current?.focus();
+    saveSelection();
+    const contentHtml = editorSurfaceRef.current?.innerHTML || '';
+    setFormattedContent(contentHtml);
+    socketRef.current?.emit('formatting-update', { documentId, contentHtml });
   }
 
   async function renameDocument() {
@@ -271,7 +371,11 @@ export default function Editor({ user }) {
     try {
       await apiFetch(`/documents/${documentId}/versions`, {
         method: 'POST',
-        body: JSON.stringify({ message: versionMessage.trim(), content: text })
+        body: JSON.stringify({
+          message: versionMessage.trim(),
+          content: text,
+          contentHtml: editorSurfaceRef.current?.innerHTML || ''
+        })
       });
       setVersionMessage('');
       setSaveSuccess('Version snapshot saved!');
@@ -285,6 +389,18 @@ export default function Editor({ user }) {
   }
 
   if (!document) {
+    if (error) {
+      return (
+        <section className="editor-card">
+          <div className="empty-state">
+            <h2>Unable to load this document</h2>
+            <p>{error}</p>
+            <p className="muted">Return to the channel and open an existing document, or create a new one.</p>
+          </div>
+        </section>
+      );
+    }
+
     return (
       <div className="editor-loading-skeleton">
         <div className="skeleton-spinner" />
@@ -351,17 +467,36 @@ export default function Editor({ user }) {
       {saveSuccess && <div className="toast-banner toast-success">✨ {saveSuccess}</div>}
 
       <div className="editor-workspace">
-        <textarea
-          ref={textareaRef}
-          className="editor-textarea"
-          readOnly={readOnly}
-          value={text}
-          onChange={handleChange}
+        {!readOnly && (
+          <div className="editor-toolbar" role="toolbar" aria-label="Text formatting">
+            <button type="button" className="format-button format-bold" onMouseDown={(event) => { event.preventDefault(); saveSelection(); }} onClick={() => applyFormat('bold')} title="Bold">B</button>
+            <button type="button" className="format-button format-italic" onMouseDown={(event) => { event.preventDefault(); saveSelection(); }} onClick={() => applyFormat('italic')} title="Italic">I</button>
+            <button type="button" className="format-button format-underline" onMouseDown={(event) => { event.preventDefault(); saveSelection(); }} onClick={() => applyFormat('underline')} title="Underline">U</button>
+            <label className="format-color" title="Text color" onMouseDown={saveSelection}>
+              <span>A</span>
+              <input type="color" defaultValue="#10b981" onChange={(event) => applyFormat('foreColor', event.target.value)} onClick={saveSelection} aria-label="Text color" />
+            </label>
+            <label className="format-color format-highlight" title="Highlight color" onMouseDown={saveSelection}>
+              <span>▰</span>
+              <input type="color" defaultValue="#fef08a" onChange={(event) => applyFormat('hiliteColor', event.target.value)} onClick={saveSelection} aria-label="Highlight color" />
+            </label>
+            <button type="button" className="format-button format-clear" onMouseDown={(event) => { event.preventDefault(); saveSelection(); }} onClick={() => applyFormat('removeFormat')} title="Clear formatting">⌫</button>
+            <span className="toolbar-hint">Select text to format</span>
+          </div>
+        )}
+        <div
+          ref={editorSurfaceRef}
+          className="editor-textarea editor-surface"
+          contentEditable={!readOnly}
+          suppressContentEditableWarning
           onSelect={sendCursor}
           onClick={sendCursor}
           onKeyUp={sendCursor}
-          placeholder={readOnly ? 'View-only access' : 'Start typing together in real-time...'}
-        />
+          onInput={handleChange}
+          role="textbox"
+          aria-label="Document editor"
+          data-placeholder={readOnly ? 'View-only access' : 'Start typing together in real-time...'}
+        ></div>
 
         {remoteCursors.length > 0 && (
           <div className="cursor-indicators-bar">

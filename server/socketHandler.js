@@ -70,6 +70,7 @@ export function setupSocketHandlers(io) {
           documentId: document.id,
           title: document.title,
           state: crdt.getState(),
+          formattedContent: document.formatted_content || '',
           content: crdt.getText(),
           role: membership.role,
           users: getUsers(document.id)
@@ -88,13 +89,19 @@ export function setupSocketHandlers(io) {
       leaveDocument(socket, documentId, io);
     });
 
-    socket.on('crdt-operation', async ({ documentId, operation }) => {
+    socket.on('crdt-operation', async ({ documentId, operation }, acknowledge) => {
+      const respond = typeof acknowledge === 'function' ? acknowledge : () => {};
       const key = String(documentId);
-      if (!socket.data.documents.has(key)) return socket.emit('error', { message: 'Join the document first' });
+      if (!socket.data.documents.has(key)) {
+        respond({ ok: false, message: 'Join the document first' });
+        return socket.emit('error', { message: 'Join the document first' });
+      }
       if (!['admin', 'editor'].includes(socket.data.roles[key])) {
+        respond({ ok: false, message: 'Viewers cannot modify documents' });
         return socket.emit('error', { message: 'Viewers cannot modify documents' });
       }
       if (!isValidOperation(operation)) {
+        respond({ ok: false, message: 'Invalid CRDT operation' });
         return socket.emit('error', { message: 'Invalid CRDT operation' });
       }
 
@@ -104,6 +111,11 @@ export function setupSocketHandlers(io) {
         const crdt = getActiveCRDT(documentId, document.crdt_state);
         const changed = crdt.applyOperation(operation);
         if (!changed && !crdt.hasOperation(operation.id)) {
+          if (operation.type === 'delete') {
+            respond({ ok: true, ignored: true });
+            return;
+          }
+          respond({ ok: false, message: 'Operation dependency is not available' });
           return socket.emit('error', { message: 'Operation dependency is not available' });
         }
 
@@ -117,8 +129,25 @@ export function setupSocketHandlers(io) {
           [crdt.getText(), crdt.getState(), documentId]
         );
         socket.to(roomName(documentId)).emit('crdt-operation', { documentId, operation });
+        respond({ ok: true });
       } catch {
+        respond({ ok: false, message: 'Unable to apply CRDT operation' });
         socket.emit('error', { message: 'Unable to apply CRDT operation' });
+      }
+    });
+
+    socket.on('formatting-update', async ({ documentId, contentHtml }) => {
+      const key = String(documentId);
+      if (!socket.data.documents.has(key) || !['admin', 'editor'].includes(socket.data.roles[key])) return;
+      if (typeof contentHtml !== 'string' || contentHtml.length > 1000000) return;
+      try {
+        await query(
+          `UPDATE documents SET formatted_content = $1, updated_at = NOW() WHERE id = $2`,
+          [contentHtml, documentId]
+        );
+        socket.to(roomName(documentId)).emit('formatting-update', { documentId, contentHtml });
+      } catch {
+        socket.emit('error', { message: 'Unable to save formatting' });
       }
     });
 

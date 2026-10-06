@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS documents (
   channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
   title VARCHAR(200) NOT NULL,
   current_content TEXT NOT NULL DEFAULT '',
+  formatted_content TEXT NOT NULL DEFAULT '',
   crdt_state JSONB NOT NULL DEFAULT '{"nodes":{},"pendingOperations":{}}'::jsonb,
   created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS versions (
   document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   content_snapshot TEXT NOT NULL,
+  content_html TEXT NOT NULL DEFAULT '',
   message VARCHAR(255) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

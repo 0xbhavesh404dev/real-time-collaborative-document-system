@@ -25,10 +25,14 @@
 body {
   margin: 0;
   min-width: 320px;
+  min-height: 100vh;
   background-color: var(--bg-primary);
   background-image: 
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
     radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.1) 0%, transparent 40%),
     radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.08) 0%, transparent 40%);
+  background-size: 42px 42px, 42px 42px, auto, auto;
   color: var(--text-primary);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
@@ -375,8 +379,10 @@ input:focus, textarea:focus, select:focus {
 /* Document Editor Space */
 .document-page {
   width: min(1400px, 94vw);
+  height: 100vh;
   margin: 0 auto;
-  padding: 24px 0 60px;
+  padding: 24px 0;
+  overflow: hidden;
 }
 
 .document-layout {
@@ -384,16 +390,21 @@ input:focus, textarea:focus, select:focus {
   grid-template-columns: 1.6fr 1fr;
   gap: 24px;
   margin-top: 16px;
+  height: calc(100vh - 92px);
+  min-height: 0;
+  align-items: stretch;
 }
 
 /* Redesigned Editor Card */
 .editor-card {
   background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.035), transparent 35%);
+  border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 16px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(16, 185, 129, 0.03);
   display: flex;
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -406,6 +417,18 @@ input:focus, textarea:focus, select:focus {
   align-items: flex-start;
   flex-wrap: wrap;
   gap: 20px;
+  position: relative;
+}
+
+.editor-header::after {
+  content: '';
+  position: absolute;
+  left: 28px;
+  right: 28px;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent-color), transparent 65%);
+  opacity: 0.5;
 }
 
 .status-pill-row {
@@ -505,12 +528,18 @@ input:focus, textarea:focus, select:focus {
 .editor-workspace {
   position: relative;
   background: var(--bg-primary);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .editor-textarea {
   display: block;
   width: 100%;
-  min-height: 520px;
+  height: 100%;
+  min-height: 0;
   padding: 28px;
   border: none;
   background: transparent;
@@ -518,8 +547,9 @@ input:focus, textarea:focus, select:focus {
   font-family: var(--font-sans);
   font-size: 16px;
   line-height: 1.8;
-  resize: vertical;
+  resize: none;
   outline: none;
+  overflow-y: auto;
 }
 
 .cursor-indicators-bar {
@@ -625,13 +655,15 @@ input:focus, textarea:focus, select:focus {
 /* Redesigned History Panel Card */
 .history-panel-card {
   background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background-image: linear-gradient(160deg, rgba(56, 189, 248, 0.035), transparent 35%);
+  border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 16px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
-  max-height: 750px;
 }
 
 .history-header {
@@ -752,6 +784,113 @@ input:focus, textarea:focus, select:focus {
   flex-direction: column;
   gap: 12px;
   flex: 1;
+  min-height: 0;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(16, 185, 129, 0.55) transparent;
+  scrollbar-width: thin;
+}
+
+.editor-surface {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+}
+
+.editor-surface:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 28px;
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.format-button,
+.format-color {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.format-button:hover,
+.format-color:hover {
+  border-color: var(--accent-color);
+  background: var(--accent-glow);
+  transform: translateY(-1px);
+}
+
+.format-bold { font-weight: 800; }
+.format-italic { font-style: italic; }
+.format-underline { text-decoration: underline; }
+.format-clear { color: #fca5a5; }
+
+.format-color {
+  position: relative;
+  overflow: hidden;
+  font-weight: 800;
+}
+
+.format-color span {
+  pointer-events: none;
+  z-index: 1;
+}
+
+.format-color input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.format-highlight span {
+  color: #fef08a;
+}
+
+.toolbar-hint {
+  margin-left: 4px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.3px;
+}
+
+.version-timeline-list::-webkit-scrollbar,
+.editor-textarea::-webkit-scrollbar {
+  width: 7px;
+}
+
+.version-timeline-list::-webkit-scrollbar-track,
+.editor-textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.version-timeline-list::-webkit-scrollbar-thumb,
+.editor-textarea::-webkit-scrollbar-thumb {
+  background: rgba(16, 185, 129, 0.45);
+  border-radius: 999px;
 }
 
 .timeline-item {
@@ -879,7 +1018,20 @@ input:focus, textarea:focus, select:focus {
 }
 
 @media (max-width: 992px) {
+  .document-page {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
   .document-layout {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
+  }
+
+  .editor-card,
+  .history-panel-card {
+    height: 620px;
   }
 }

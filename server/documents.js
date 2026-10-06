@@ -52,7 +52,7 @@ router.post('/channels/:channelId/documents', async (req, res) => {
     }
     const result = await query(
       `INSERT INTO documents (channel_id, title, created_by)
-       VALUES ($1, $2, $3) RETURNING id, channel_id, title, current_content, crdt_state, created_by, created_at, updated_at`,
+       VALUES ($1, $2, $3) RETURNING id, channel_id, title, current_content, formatted_content, crdt_state, created_by, created_at, updated_at`,
       [req.params.channelId, title.trim(), req.user.id]
     );
     return res.status(201).json({ document: result.rows[0] });
