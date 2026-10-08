@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { apiFetch } from '../api.js';
 import { createSocket } from '../socket.js';
@@ -132,11 +132,44 @@ export default function Editor({ user, onDocumentUnavailable }) {
   const [toast, setToast] = useState({ message: '', type: 'ok' });
   const searchInputRef = useRef(null);
   const [selectedText, setSelectedText] = useState('');
-  const [aiSettings, setAiSettings] = useState({ autocomplete: true, grammarAssistant: true, plagiarism: true });
+  const [aiSettings, setAiSettings] = useState({ autocomplete: false, grammarAssistant: true, plagiarism: true });
   const aiEnabled = Boolean(document && ['admin', 'editor'].includes(document.role));
   const autocomplete = useAutocomplete({ documentId, text, enabled: aiEnabled && aiSettings.autocomplete });
   const plagiarism = usePlagiarism({ documentId, text, enabled: aiEnabled && aiSettings.plagiarism });
-  const grammar = useGrammar({ documentId, text, enabled: aiEnabled && aiSettings.grammarAssistant });
+  const getGrammarContext = useCallback((source) => {
+    const editor = editorSurfaceRef.current;
+    const editorText = String(editor?.innerText || source || '').trim();
+    if (!editor || editorText !== String(source || '').trim()) {
+      const start = Math.max(0, String(source || '').length - 5000);
+      return { text: String(source || '').slice(start), offset: start };
+    }
+
+    const selection = globalThis.getSelection();
+    if (!selection?.anchorNode || !editor.contains(selection.anchorNode)) {
+      return { text: editorText.slice(-5000), offset: Math.max(0, editorText.length - 5000) };
+    }
+
+    try {
+      const range = globalThis.document.createRange();
+      range.selectNodeContents(editor);
+      range.setEnd(selection.anchorNode, selection.anchorOffset);
+      const caretOffset = range.toString().length;
+      const start = editorText.lastIndexOf('\n', Math.max(0, caretOffset - 1)) + 1;
+      const nextBreak = editorText.indexOf('\n', caretOffset);
+      const end = nextBreak < 0 ? editorText.length : nextBreak;
+      const paragraph = editorText.slice(start, end);
+      const trimmed = paragraph.trim();
+      if (trimmed.length >= 12) {
+        return { text: trimmed, offset: start + paragraph.indexOf(trimmed) };
+      }
+    } catch {
+      // If the current selection cannot be measured, check the current text tail.
+    }
+
+    const fallbackStart = Math.max(0, editorText.length - 5000);
+    return { text: editorText.slice(fallbackStart), offset: fallbackStart };
+  }, []);
+  const grammar = useGrammar({ documentId, text, enabled: aiEnabled && aiSettings.grammarAssistant, getCheckContext: getGrammarContext });
 
   useEffect(() => {
     localStorage.setItem('collab_client_id', clientId.current);
@@ -270,10 +303,15 @@ export default function Editor({ user, onDocumentUnavailable }) {
     const onReplace = (event) => {
       const { text: replacement = '', original = '', replaceDocument = false, expectedSourceText, expectedDocumentId } = event.detail || {};
       let applied = false;
-      if ((expectedDocumentId != null && String(expectedDocumentId) !== String(documentId)) || (expectedSourceText != null && String(expectedSourceText).trim() !== String(textRef.current || '').trim())) {
+      const editorTextNow = String(editorSurfaceRef.current?.innerText || '').trim();
+      const sourceChanged = expectedSourceText != null && String(expectedSourceText).trim() !== editorTextNow;
+      const targetStillUnambiguous = original
+        && countExactOccurrences(String(expectedSourceText || ''), original) === 1
+        && countExactOccurrences(editorTextNow, original) === 1;
+      if ((expectedDocumentId != null && String(expectedDocumentId) !== String(documentId)) || (sourceChanged && !targetStillUnambiguous)) {
         event.detail.reason = 'The document changed after this suggestion. The latest text is being checked.';
         setToast({ message: event.detail.reason, type: 'info' });
-        grammar.check(textRef.current, true);
+        grammar.check(editorSurfaceRef.current?.innerText || textRef.current, true);
       } else if (replaceDocument) {
         applied = replaceEntireDocument(replacement);
       } else if (original) {
@@ -300,16 +338,20 @@ export default function Editor({ user, onDocumentUnavailable }) {
     const onAcceptGrammar = (event) => {
       const issue = event.detail;
       if (!issue?.original || !issue?.suggestion) return;
-      if (String(issue.documentId) !== String(documentId) || issue.sourceText !== String(textRef.current || '').trim()) {
+      const editorTextNow = String(editorSurfaceRef.current?.innerText || '').trim();
+      const sourceChanged = issue.sourceText !== editorTextNow;
+      const targetStillUnambiguous = countExactOccurrences(String(issue.sourceText || ''), issue.original) === 1
+        && countExactOccurrences(editorTextNow, issue.original) === 1;
+      if (String(issue.documentId) !== String(documentId) || (sourceChanged && !targetStillUnambiguous)) {
         setToast({ message: 'The document changed after this suggestion. Checking the latest text…', type: 'info' });
-        grammar.check(textRef.current, true);
+        grammar.check(editorTextNow || textRef.current, true);
         return;
       }
       const applied = replaceExactText(issue.original, issue.suggestion);
       if (applied) setToast({ message: 'Grammar suggestion accepted', type: 'ok' });
       else {
         setToast({ message: 'The source text changed. Checking the latest text…', type: 'info' });
-        grammar.check(textRef.current, true);
+        grammar.check(editorSurfaceRef.current?.innerText || textRef.current, true);
       }
     };
     const onRejectGrammar = () => grammar.reject();
@@ -563,23 +605,40 @@ export default function Editor({ user, onDocumentUnavailable }) {
     if (readOnly || !original || !replacement || !editorSurfaceRef.current) return false;
     const root = editorSurfaceRef.current;
     const walker = globalThis.document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    let combinedText = '';
     let node = walker.nextNode();
     while (node) {
       const value = node.nodeValue || '';
-      const index = value.indexOf(original);
-      if (index !== -1) {
-        const selection = window.getSelection();
-        const range = globalThis.document.createRange();
-        range.setStart(node, index);
-        range.setEnd(node, index + original.length);
-        selection.removeAllRanges();
-        selection.addRange(range);
-        selectionRef.current = range.cloneRange();
-        return replaceCurrentSelection(replacement);
-      }
+      textNodes.push({ node, start: combinedText.length, end: combinedText.length + value.length });
+      combinedText += value;
       node = walker.nextNode();
     }
-    return false;
+    const index = combinedText.indexOf(original);
+    if (index < 0) return false;
+    const endIndex = index + original.length;
+    const startEntry = textNodes.find((entry) => index >= entry.start && index < entry.end);
+    const endEntry = textNodes.find((entry) => endIndex > entry.start && endIndex <= entry.end);
+    if (!startEntry || !endEntry) return false;
+    const selection = window.getSelection();
+    const range = globalThis.document.createRange();
+    range.setStart(startEntry.node, index - startEntry.start);
+    range.setEnd(endEntry.node, endIndex - endEntry.start);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    selectionRef.current = range.cloneRange();
+    return replaceCurrentSelection(replacement);
+  }
+
+  function countExactOccurrences(value, phrase) {
+    if (!phrase) return 0;
+    let count = 0;
+    let from = 0;
+    while ((from = value.indexOf(phrase, from)) !== -1) {
+      count += 1;
+      from += phrase.length;
+    }
+    return count;
   }
 
   function commitEditorHtml() {
@@ -1387,7 +1446,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
           )}
           <div className="ai-live-strip">
             <span className="ai-live-dot" />
-            {grammar.isChecking ? 'AI is checking grammar…' : plagiarism.isChecking ? 'Scanning for similarity…' : `AI originality risk ${plagiarism.report.score || 0}%`}
+            {grammar.isChecking ? 'LanguageTool is checking grammar…' : plagiarism.isChecking ? 'Scanning for similarity…' : `AI originality risk ${plagiarism.report.score || 0}%`}
             <button type="button" onClick={() => plagiarism.check(text)}>Run plagiarism check</button>
           </div>
         </>

@@ -47,7 +47,7 @@ export default function AIPanel({ user }) {
   const [isWorking, setIsWorking] = useState(false);
   const [notice, setNotice] = useState('');
   const [settings, setSettings] = useState({
-    autocomplete: true,
+    autocomplete: false,
     grammarAssistant: true,
     plagiarism: true,
     autoParaphrase: false,
@@ -108,18 +108,16 @@ export default function AIPanel({ user }) {
       } else if (action === 'grammar') {
         const result = await apiFetch('/ai/grammar', {
           method: 'POST',
-          body: JSON.stringify({ documentId, text })
+          body: JSON.stringify({ documentId, text, manual: true })
         });
         setGrammarSuggestions((result.suggestions || []).map((item) => ({
           ...item,
           sourceText: currentDocumentText.trim(),
           documentId: String(documentId)
         })));
-        setNotice(result.fallback
-          ? 'The AI grammar service is temporarily unavailable. Please try again shortly.'
-          : result.suggestions?.length
-            ? `${result.suggestions.length} grammar suggestion${result.suggestions.length === 1 ? '' : 's'} found.`
-            : 'No clear grammar issues found.');
+        setNotice(result.message || (result.suggestions?.length
+          ? `${result.suggestions.length} grammar suggestion${result.suggestions.length === 1 ? '' : 's'} found by ${result.provider || 'LanguageTool'}.`
+          : `No clear grammar issues found by ${result.provider || 'LanguageTool'}.`));
         setActiveTab('copilot');
       } else if (action === 'summarize') {
         const result = await apiFetch('/ai/summarize', {
@@ -163,17 +161,23 @@ export default function AIPanel({ user }) {
       setLiveGrammar(event.detail || null);
       if (event.detail) setActiveTab('copilot');
     };
+    const onGrammarStatus = (event) => {
+      if (event.detail?.message) setNotice(event.detail.message);
+      else setNotice((current) => current.startsWith('LanguageTool is unavailable') || current.startsWith('Grammar checking failed') ? '' : current);
+    };
     const onCommand = (event) => runAction(event.detail?.action, event.detail?.text || '');
     window.addEventListener('editor-selection', onSelection);
     window.addEventListener('editor-document-text', onDocumentText);
     window.addEventListener('editor-plagiarism-result', onPlagiarism);
     window.addEventListener('editor-grammar-result', onGrammar);
+    window.addEventListener('editor-grammar-status', onGrammarStatus);
     window.addEventListener('ai-command', onCommand);
     return () => {
       window.removeEventListener('editor-selection', onSelection);
       window.removeEventListener('editor-document-text', onDocumentText);
       window.removeEventListener('editor-plagiarism-result', onPlagiarism);
       window.removeEventListener('editor-grammar-result', onGrammar);
+      window.removeEventListener('editor-grammar-status', onGrammarStatus);
       window.removeEventListener('ai-command', onCommand);
     };
   }, [runAction]);
@@ -189,8 +193,10 @@ export default function AIPanel({ user }) {
 
   function acceptGrammar(issue) {
     if (!issue) return;
-    replaceSelection(issue.suggestion, issue.original, false, issue.sourceText, issue.documentId);
-    setGrammarSuggestions((items) => items.filter((item) => item !== issue));
+    const applied = replaceSelection(issue.suggestion, issue.original, false, issue.sourceText, issue.documentId);
+    if (applied) {
+      setGrammarSuggestions((items) => items.filter((item) => item !== issue));
+    }
   }
 
   function rejectGrammar(issue) {
@@ -236,7 +242,7 @@ export default function AIPanel({ user }) {
             <div className="ai-live-grammar-card" role="alert">
               <div className="ai-live-grammar-header">
                 <div className="ai-live-grammar-icon">Aa</div>
-                <div><strong>Grammar suggestion</strong><span>Detected while you type</span></div>
+                <div><strong>Grammar suggestion</strong><span>{liveGrammar.source === 'gemini' ? 'Gemini fallback' : 'LanguageTool · detected while you type'}</span></div>
                 <button onClick={() => rejectGrammar(liveGrammar)} aria-label="Dismiss grammar suggestion">×</button>
               </div>
               <div className="ai-live-grammar-compare">
