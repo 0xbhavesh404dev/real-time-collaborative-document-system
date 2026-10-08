@@ -1,0 +1,28 @@
+import { chromium } from 'playwright';
+const path = '/Users/bhaveshkumar/Downloads/DBMS Project2/real-time-collaborative-document-system/design/collaborative-editor.html';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const errors = [];
+page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+page.on('pageerror', e => errors.push('PAGEERROR: ' + e.message));
+await page.goto('file://' + path, { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(1500);
+const results = await page.evaluate(() => {
+  const r = {};
+  r.title = document.title;
+  r.views = Array.from(document.querySelectorAll('.view-container')).map(v => ({ id: v.id, active: v.classList.contains('active') }));
+  r.editorCanvas = !!document.getElementById('editorCanvas');
+  r.editorCanvasEditable = document.getElementById('editorCanvas')?.getAttribute('contenteditable');
+  r.tabs = Array.from(document.querySelectorAll('.sidebar-tab')).map(t => t.textContent.trim());
+  r.tabContents = Array.from(document.querySelectorAll('.tab-content')).map(t => ({ id: t.id, active: t.classList.contains('active') }));
+  r.remoteCursors = Array.from(document.querySelectorAll('.remote-cursor')).map(c => ({ id: c.id, top: c.style.top, left: c.style.left }));
+  r.toasts = document.getElementById('toastContainer') ? true : false;
+  r.modals = Array.from(document.querySelectorAll('.modal-overlay')).map(m => m.id);
+  r.breadcrumb = document.getElementById('breadcrumb-nav')?.textContent.trim();
+  r.syncPill = document.querySelector('.sync-pill')?.textContent.trim();
+  r.docTitle = document.getElementById('docTitleInput')?.value;
+  return r;
+});
+console.log(JSON.stringify(results, null, 2));
+console.log('CONSOLE_ERRORS:', JSON.stringify(errors));
+await browser.close();

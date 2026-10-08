@@ -1,0 +1,160 @@
+import express from 'express';
+import { requireAuth } from '../auth.js';
+import { query } from '../db.js';
+import { autocomplete, grammar, paraphrase, summarize, translate } from '../services/ai.service.js';
+import { analyzePlagiarism } from '../services/plagiarism.service.js';
+
+const router = express.Router();
+router.use(requireAuth);
+
+const rateBuckets = new Map();
+const WINDOW_MS = 60_000;
+// Keep an abuse guard without cutting off ordinary editing sessions: live
+// grammar checks and manual AI tools share this per-account request budget.
+const MAX_REQUESTS = Math.max(1, Number.parseInt(process.env.AI_REQUESTS_PER_MINUTE || '60', 10) || 60);
+
+function rateLimit(req, res, next) {
+  const userKey = String(req.user.id);
+  const now = Date.now();
+  const recent = (rateBuckets.get(userKey) || []).filter((timestamp) => now - timestamp < WINDOW_MS);
+  if (recent.length >= MAX_REQUESTS) {
+    const retryAfter = Math.max(1, Math.ceil((WINDOW_MS - (now - recent[0])) / 1000));
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ message: `This app reached its ${MAX_REQUESTS}-request per minute safety limit. Try again in ${retryAfter} seconds.` });
+  }
+  recent.push(now);
+  rateBuckets.set(userKey, recent);
+  return next();
+}
+
+router.use(rateLimit);
+
+function requiredText(req, res, max = 12000) {
+  const text = String(req.body?.text || '').trim();
+  if (!text) {
+    res.status(400).json({ message: 'Text is required' });
+    return null;
+  }
+  if (text.length > max) {
+    res.status(413).json({ message: `Text is too long. Maximum is ${max} characters.` });
+    return null;
+  }
+  return text;
+}
+
+async function audit(documentId, userId, kind, inputText, outputText, accepted = false) {
+  if (!documentId) return;
+  try {
+    await query(
+      `INSERT INTO ai_suggestions (document_id, user_id, kind, input_text, output_text, accepted)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [documentId, userId, kind, inputText || '', outputText || '', accepted]
+    );
+  } catch (error) {
+    console.warn('AI audit log unavailable:', error.message);
+  }
+}
+
+router.post('/autocomplete', async (req, res) => {
+  const text = requiredText(req, res, 500);
+  if (!text) return;
+  try {
+    const suggestion = await autocomplete(text);
+    await audit(req.body.documentId, req.user.id, 'autocomplete', text, suggestion);
+    return res.json({ suggestion });
+  } catch (error) {
+    console.error('Autocomplete failed:', error);
+    return res.json({ suggestion: '', fallback: true });
+  }
+});
+
+router.post('/paraphrase', async (req, res) => {
+  const text = requiredText(req, res, 2500);
+  if (!text) return;
+  try {
+    const tone = ['academic', 'casual', 'concise'].includes(req.body?.tone) ? req.body.tone : 'academic';
+    const audience = ['general', 'instructor', 'team', 'customers'].includes(req.body?.audience) ? req.body.audience : 'general';
+    const goal = ['clarity', 'professional', 'persuasive', 'concise'].includes(req.body?.goal) ? req.body.goal : 'clarity';
+    const alternatives = await paraphrase(text, tone, { audience, goal });
+    await audit(req.body.documentId, req.user.id, 'paraphrase', text, alternatives.join(' ||| '));
+    return res.json({ alternatives, tone });
+  } catch (error) {
+    console.error('Paraphrase failed:', error);
+    const quotaExceeded = /\b429\b|quota/i.test(error.message || '');
+    return res.json({
+      alternatives: [],
+      fallback: true,
+      message: quotaExceeded
+        ? 'Google AI quota is currently exhausted. Check Google AI Studio usage or try again after the quota resets.'
+        : /did not preserve the full passage/i.test(error.message || '')
+          ? 'The rewrite did not keep the full passage intact. Try again or select a shorter section.'
+        : 'The AI writing service is temporarily unavailable. Please try again shortly.'
+    });
+  }
+});
+
+router.post('/grammar', async (req, res) => {
+  const text = requiredText(req, res, 5000);
+  if (!text) return;
+  try {
+    const suggestions = await grammar(text);
+    await audit(req.body.documentId, req.user.id, 'grammar', text, JSON.stringify(suggestions));
+    return res.json({ suggestions });
+  } catch (error) {
+    console.error('Grammar check failed:', error);
+    return res.json({ suggestions: [], fallback: true });
+  }
+});
+
+router.post('/summarize', async (req, res) => {
+  const text = requiredText(req, res, 24000);
+  if (!text) return;
+  try {
+    const summary = await summarize(text);
+    await audit(req.body.documentId, req.user.id, 'summarize', text, summary);
+    return res.json({ summary });
+  } catch (error) {
+    console.error('Summarize failed:', error);
+    return res.json({ summary: 'The document is ready for AI summarization once an AI provider is configured.', fallback: true });
+  }
+});
+
+router.post('/translate', async (req, res) => {
+  const text = requiredText(req, res, 5000);
+  if (!text) return;
+  try {
+    const language = String(req.body?.language || 'English').trim().slice(0, 60) || 'English';
+    const translated = await translate(text, language);
+    await audit(req.body.documentId, req.user.id, 'translate', text, translated);
+    return res.json({ translated, language });
+  } catch (error) {
+    console.error('Translate failed:', error);
+    return res.json({ translated: text, language: req.body?.language || 'English', fallback: true });
+  }
+});
+
+router.post('/plagiarism', async (req, res) => {
+  const text = requiredText(req, res, 24000);
+  if (!text) return;
+  try {
+    const report = analyzePlagiarism(text);
+    if (req.body.documentId) {
+      await query(
+        `INSERT INTO plagiarism_reports (document_id, score, matches) VALUES ($1, $2, $3)`,
+        [req.body.documentId, report.score, JSON.stringify(report.matches)]
+      ).catch((error) => console.warn('Plagiarism report audit unavailable:', error.message));
+    }
+    return res.json(report);
+  } catch (error) {
+    console.error('Plagiarism check failed:', error);
+    return res.status(500).json({ message: 'Unable to run plagiarism check' });
+  }
+});
+
+router.post('/suggestion-accepted', async (req, res) => {
+  const { documentId, suggestionId } = req.body || {};
+  if (!documentId || !suggestionId) return res.status(400).json({ message: 'documentId and suggestionId are required' });
+  return res.json({ ok: true });
+});
+
+export default router;

@@ -1,0 +1,21 @@
+# Implementation Status
+
+- [x] UI redesign foundation (dark application shell, theme variables)
+- [x] Rich-text toolbar controls (Font family, size, bold, italic, underline, colors, alignment, list/indent, line height, image upload, clear formatting)
+- [x] Font size & family state synchronization
+- [x] Image upload with 2MB size check and SVG icon
+- [x] Document version history, preview, and restore
+- [x] Real-time collaboration via Socket.IO + custom CRDT
+- [x] PostgreSQL persistence for users, channels, documents, operations, versions
+- [x] Responsive layout and button alignment
+- [x] Ordered and unordered lists (bullet and number)
+- [x] Link insertion
+- [x] Blockquote / Code block formatting
+- [x] Undo and Redo toolbar buttons
+- [x] Right rail tabs (Collaborators and Operations tabs alongside Version History)
+- [x] Collaboration health panel
+- [x] Document search within editor
+- [x] Share modal / link copy
+- [x] Presentation mode
+- [x] Export HTML
+- [x] Command palette (Cmd+K)
