@@ -1,6 +1,7 @@
 import express from 'express';
 import { query } from './db.js';
 import { requireAuth } from './auth.js';
+import { forgetDocument, revokeChannelMember, syncChannelMemberRole } from './socketHandler.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -199,7 +200,15 @@ router.delete('/:id/members/:userId', requireMembership, requireAdmin, async (re
     return res.status(400).json({ message: 'The channel owner cannot be removed' });
   }
   try {
-    await query('DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2', [req.params.id, req.params.userId]);
+    const documentResult = await query('SELECT id FROM documents WHERE channel_id = $1', [req.params.id]);
+    const result = await query(
+      'DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2 RETURNING user_id',
+      [req.params.id, req.params.userId]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Member not found in this channel' });
+    }
+    revokeChannelMember(req.params.userId, documentResult.rows.map((row) => row.id));
     return res.json({ message: 'Member removed' });
   } catch {
     return res.status(500).json({ message: 'Unable to remove member' });
@@ -215,6 +224,7 @@ router.patch('/:id/members/:userId', requireMembership, requireAdmin, async (req
     return res.status(400).json({ message: 'The channel owner must remain an admin' });
   }
   try {
+    const documentResult = await query('SELECT id FROM documents WHERE channel_id = $1', [req.params.id]);
     const result = await query(
       `UPDATE channel_members SET role = $1 WHERE channel_id = $2 AND user_id = $3
        RETURNING channel_id, user_id, role`,
@@ -223,6 +233,7 @@ router.patch('/:id/members/:userId', requireMembership, requireAdmin, async (req
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Member not found' });
     }
+    syncChannelMemberRole(req.params.userId, role, documentResult.rows.map((row) => row.id));
     return res.json({ member: result.rows[0] });
   } catch {
     return res.status(500).json({ message: 'Unable to update member role' });
@@ -231,7 +242,12 @@ router.patch('/:id/members/:userId', requireMembership, requireAdmin, async (req
 
 router.delete('/:id', requireMembership, requireAdmin, async (req, res) => {
   try {
-    await query('DELETE FROM channels WHERE id = $1', [req.params.id]);
+    const documents = await query('SELECT id FROM documents WHERE channel_id = $1', [req.params.id]);
+    const result = await query('DELETE FROM channels WHERE id = $1 RETURNING id', [req.params.id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Channel not found' });
+    }
+    documents.rows.forEach(({ id }) => forgetDocument(id));
     return res.json({ message: 'Channel deleted' });
   } catch {
     return res.status(500).json({ message: 'Unable to delete channel' });

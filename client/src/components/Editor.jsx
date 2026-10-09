@@ -29,6 +29,19 @@ import {
 // Maximum file size for image uploads (2MB)
 const MAX_IMAGE_SIZE = 2 * 1024 * 1024;
 
+function stripTypingAnchors(html = '') {
+  let cleanHtml = String(html || '').replace(/\u200B/g, '');
+  // Collapsed-caret marks only exist to hold the local insertion point. Once
+  // serialized, empty inline wrappers cannot carry typing state and make a
+  // later caret appear formatted when no text is actually formatted.
+  let previousHtml;
+  do {
+    previousHtml = cleanHtml;
+    cleanHtml = cleanHtml.replace(/<(span|b|strong|i|em|u|s|strike|del)\b[^>]*>\s*<\/\1>/gi, '');
+  } while (cleanHtml !== previousHtml);
+  return cleanHtml;
+}
+
 function operationsForChange(oldText, newText, state, clientId, nextId) {
   let start = 0;
   while (start < oldText.length && start < newText.length && oldText[start] === newText[start]) {
@@ -237,8 +250,9 @@ export default function Editor({ user, onDocumentUnavailable }) {
       stateRef.current = createCrdtState(payload.state);
       textRef.current = payload.content || '';
       setText(payload.content || '');
-      formattedContentRef.current = payload.formattedContent || '';
-      setFormattedContent(payload.formattedContent || '');
+      const contentHtml = stripTypingAnchors(payload.formattedContent);
+      formattedContentRef.current = contentHtml;
+      setFormattedContent(contentHtml);
       setDocument((current) => ({
         ...current,
         title: payload.title,
@@ -257,8 +271,9 @@ export default function Editor({ user, onDocumentUnavailable }) {
       stateRef.current = createCrdtState(payload.state);
       textRef.current = payload.content || '';
       setText(payload.content || '');
-      formattedContentRef.current = payload.contentHtml || '';
-      setFormattedContent(payload.contentHtml || '');
+      const contentHtml = stripTypingAnchors(payload.contentHtml);
+      formattedContentRef.current = contentHtml;
+      setFormattedContent(contentHtml);
       setError('');
       setSaveSuccess(`Restored version: ${payload.version?.message || 'Updated'}`);
       setTimeout(() => setSaveSuccess(''), 4000);
@@ -281,11 +296,21 @@ export default function Editor({ user, onDocumentUnavailable }) {
       ]);
     });
     socket.on('formatting-update', ({ contentHtml }) => {
-      formattedContentRef.current = contentHtml || '';
-      setFormattedContent(contentHtml || '');
+      const cleanHtml = stripTypingAnchors(contentHtml);
+      formattedContentRef.current = cleanHtml;
+      setFormattedContent(cleanHtml);
       syncEditorSurface();
     });
     socket.on('error', (payload) => setError(payload.message));
+    const handleDocumentUnavailable = (message) => {
+      if (!active) return;
+      window.dispatchEvent(new CustomEvent('workspace-documents-removed', { detail: { documentIds: [documentId] } }));
+      setDocument(null);
+      setError(message);
+      onDocumentUnavailable?.(true);
+    };
+    socket.on('document-deleted', () => handleDocumentUnavailable('This document was deleted by a channel admin.'));
+    socket.on('document-access-revoked', () => handleDocumentUnavailable('Your access to this document was removed.'));
 
     const localRestoreListener = async () => {
       try {
@@ -293,7 +318,9 @@ export default function Editor({ user, onDocumentUnavailable }) {
         stateRef.current = createCrdtState(result.document.crdt_state);
         textRef.current = result.document.current_content || '';
         setText(result.document.current_content || '');
-        setFormattedContent(result.document.formatted_content || '');
+        const contentHtml = stripTypingAnchors(result.document.formatted_content);
+        formattedContentRef.current = contentHtml;
+        setFormattedContent(contentHtml);
       } catch (requestError) {
         setError(requestError.message);
       }
@@ -494,6 +521,23 @@ export default function Editor({ user, onDocumentUnavailable }) {
     if (!document || !['admin', 'editor'].includes(document.role)) return;
     setError('');
     const editorSurface = event.currentTarget;
+    // Safari drops a caret out of an empty styled span as soon as the user
+    // types. The zero-width anchor keeps the insertion inside its format mark;
+    // strip it immediately so it never reaches the document model or server.
+    const anchorWalker = globalThis.document.createTreeWalker(editorSurface, NodeFilter.SHOW_TEXT);
+    const anchorNodes = [];
+    let anchorNode = anchorWalker.nextNode();
+    while (anchorNode) {
+      if (anchorNode.nodeValue?.includes('\u200B')) anchorNodes.push(anchorNode);
+      anchorNode = anchorWalker.nextNode();
+    }
+    anchorNodes.forEach((node) => {
+      let anchorIndex = node.nodeValue.indexOf('\u200B');
+      while (anchorIndex !== -1) {
+        node.deleteData(anchorIndex, 1);
+        anchorIndex = node.nodeValue.indexOf('\u200B');
+      }
+    });
     saveSelection();
     syncFormatState();
     const newText = editorSurface.innerText;
@@ -502,7 +546,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
     setSelectedText('');
     window.dispatchEvent(new CustomEvent('editor-selection', { detail: { text: '' } }));
     window.dispatchEvent(new CustomEvent('editor-document-text', { detail: { text: newText } }));
-    pendingHtmlRef.current = editorSurface.innerHTML;
+    pendingHtmlRef.current = getEditorHtml();
 
     const operations = operationsForChange(
       textRef.current,
@@ -578,8 +622,9 @@ export default function Editor({ user, onDocumentUnavailable }) {
       stateRef.current = createCrdtState(nextState);
       textRef.current = nextText;
       setText(nextText);
-      formattedContentRef.current = result.document.formatted_content || '';
-      setFormattedContent(result.document.formatted_content || '');
+      const contentHtml = stripTypingAnchors(result.document.formatted_content);
+      formattedContentRef.current = contentHtml;
+      setFormattedContent(contentHtml);
       syncEditorSurface(true);
       setError(`${message}. Document refreshed; please try that edit again.`);
     } catch (requestError) {
@@ -739,8 +784,12 @@ export default function Editor({ user, onDocumentUnavailable }) {
     return count;
   }
 
+  function getEditorHtml() {
+    return stripTypingAnchors(editorSurfaceRef.current?.innerHTML || '');
+  }
+
   function commitEditorHtml() {
-    const contentHtml = editorSurfaceRef.current?.innerHTML || '';
+    const contentHtml = getEditorHtml();
     pendingHtmlRef.current = contentHtml;
     setFormattedContent(contentHtml);
     socketRef.current?.emit('formatting-update', { documentId, contentHtml });
@@ -853,6 +902,26 @@ export default function Editor({ user, onDocumentUnavailable }) {
       const selectionElement = selectionNode?.nodeType === 1
         ? selectionNode
         : selectionNode?.parentElement;
+      const selection = doc.getSelection();
+      let caretInlineState = null;
+      if (selection?.isCollapsed && selectionElement && editorSurface.contains(selectionElement)) {
+        const computed = window.getComputedStyle(selectionElement);
+        let underline = false;
+        let strike = false;
+        let inlineNode = selectionElement;
+        while (inlineNode && inlineNode !== editorSurface) {
+          const decoration = `${inlineNode.style?.textDecorationLine || ''} ${inlineNode.style?.textDecoration || ''}`.toLowerCase();
+          underline ||= inlineNode.tagName === 'U' || decoration.includes('underline');
+          strike ||= ['S', 'STRIKE', 'DEL'].includes(inlineNode.tagName) || decoration.includes('line-through');
+          inlineNode = inlineNode.parentElement;
+        }
+        caretInlineState = {
+          bold: (Number.parseInt(computed.fontWeight, 10) || 400) >= 600,
+          italic: computed.fontStyle === 'italic',
+          underline,
+          strike
+        };
+      }
       const blockElement = selectionElement?.closest('h1,h2,h3,blockquote,pre,li,p');
       const blockFormat = blockElement?.tagName?.toLowerCase() || 'p';
       let matchedFontSize = null;
@@ -902,10 +971,10 @@ export default function Editor({ user, onDocumentUnavailable }) {
 
       setFormatState((prev) => ({
         ...prev,
-        bold: doc.queryCommandState('bold'),
-        italic: doc.queryCommandState('italic'),
-        underline: doc.queryCommandState('underline'),
-        strike: doc.queryCommandState('strikeThrough'),
+        bold: caretInlineState?.bold ?? doc.queryCommandState('bold'),
+        italic: caretInlineState?.italic ?? doc.queryCommandState('italic'),
+        underline: caretInlineState?.underline ?? doc.queryCommandState('underline'),
+        strike: caretInlineState?.strike ?? doc.queryCommandState('strikeThrough'),
         superscript: doc.queryCommandState('superscript'),
         subscript: doc.queryCommandState('subscript'),
         unorderedList: doc.queryCommandState('insertUnorderedList'),
@@ -926,7 +995,10 @@ export default function Editor({ user, onDocumentUnavailable }) {
 
   function applyFormat(command, value = null) {
     if (readOnly) return;
-    if (!restoreSelection()) editorSurfaceRef.current?.focus();
+    // Some browsers restore their old caret when a contenteditable receives
+    // focus. Focus first, then restore the saved range before changing marks.
+    editorSurfaceRef.current?.focus();
+    restoreSelection();
     const inlineField = {
       bold: 'bold',
       italic: 'italic',
@@ -940,34 +1012,93 @@ export default function Editor({ user, onDocumentUnavailable }) {
         ? range.startContainer
         : range.startContainer.parentElement;
       const block = container?.closest('p,div,h1,h2,h3,h4,h5,h6,li,blockquote,pre,td,th');
-      const emptyBlock = block && !block.textContent.trim() && !block.querySelector('img,table');
-      if (emptyBlock) {
-        const decoration = (block.style.textDecorationLine || block.style.textDecoration || '').toLowerCase();
-        const directValue = inlineField === 'bold' ? block.style.fontWeight
-          : inlineField === 'italic' ? block.style.fontStyle
-          : decoration;
-        const explicitlyOff = directValue === 'normal' || directValue === 'none'
-          || (inlineField === 'underline' && directValue && !directValue.includes('underline'))
-          || (inlineField === 'strike' && directValue && !directValue.includes('line-through'));
-        const explicitlyOn = inlineField === 'bold'
-          ? directValue === 'bold' || Number.parseInt(directValue, 10) >= 600
-          : inlineField === 'italic' ? directValue === 'italic'
-          : inlineField === 'underline' ? decoration.includes('underline')
-          : decoration.includes('line-through');
-        const currentlyEnabled = explicitlyOff ? false : explicitlyOn ? true : Boolean(formatState[inlineField]);
-        const enabled = !currentlyEnabled;
+      let mark = container?.closest('span');
+      if (block) {
+        // Store collapsed-caret formatting in the next inline run instead of
+        // relying on the browser's stale typing state between toolbar clicks.
+        if (!mark || !editorSurfaceRef.current.contains(mark) || mark.textContent.replace(/\u200B/g, '').length > 0) {
+          mark = globalThis.document.createElement('span');
+          range.insertNode(mark);
+        }
+        let anchor = Array.from(mark.childNodes).find((node) => node.nodeType === Node.TEXT_NODE && node.nodeValue.includes('\u200B'));
+        if (!anchor) {
+          anchor = globalThis.document.createTextNode('\u200B');
+          mark.insertBefore(anchor, mark.firstChild);
+        }
+        range.setStart(anchor, anchor.nodeValue.length);
+        range.collapse(true);
+        currentSelection.removeAllRanges();
+        currentSelection.addRange(range);
+        const computed = window.getComputedStyle(container || mark);
+        const caretState = {
+          bold: (Number.parseInt(computed.fontWeight, 10) || 400) >= 600,
+          italic: computed.fontStyle === 'italic',
+          underline: false,
+          strike: false
+        };
+        const decorationAncestors = [];
+        let ancestor = container;
+        while (ancestor && ancestor !== editorSurfaceRef.current) {
+          const decoration = `${ancestor.style?.textDecorationLine || ''} ${ancestor.style?.textDecoration || ''}`.toLowerCase();
+          const hasUnderline = ancestor.tagName === 'U' || decoration.includes('underline');
+          const hasStrike = ['S', 'STRIKE', 'DEL'].includes(ancestor.tagName) || decoration.includes('line-through');
+          caretState.underline ||= hasUnderline;
+          caretState.strike ||= hasStrike;
+          if (ancestor !== mark && ((inlineField === 'underline' && hasUnderline) || (inlineField === 'strike' && hasStrike))) {
+            decorationAncestors.push(ancestor);
+          }
+          ancestor = ancestor.parentElement;
+        }
+        const enabled = !caretState[inlineField];
+        caretState[inlineField] = enabled;
 
-        if (inlineField === 'bold') block.style.fontWeight = enabled ? 'bold' : 'normal';
-        else if (inlineField === 'italic') block.style.fontStyle = enabled ? 'italic' : 'normal';
-        else {
-          const token = inlineField === 'underline' ? 'underline' : 'line-through';
-          const tokens = decoration.split(/\s+/).filter((item) => item && item !== 'none' && item !== token);
-          if (enabled) tokens.push(token);
-          block.style.textDecorationLine = tokens.length ? tokens.join(' ') : 'none';
+        const liftOutOfParent = (node) => {
+          const wrapper = node.parentElement;
+          const parent = wrapper?.parentNode;
+          if (!wrapper || !parent) return false;
+          const before = wrapper.cloneNode(false);
+          const after = wrapper.cloneNode(false);
+          let passedNode = false;
+          Array.from(wrapper.childNodes).forEach((child) => {
+            if (child === node) passedNode = true;
+            else (passedNode ? after : before).appendChild(child);
+          });
+          if (before.childNodes.length) parent.insertBefore(before, wrapper);
+          parent.insertBefore(node, wrapper);
+          if (after.childNodes.length) parent.insertBefore(after, wrapper);
+          parent.removeChild(wrapper);
+          return true;
+        };
+
+        // A child cannot cancel a text decoration painted by an ancestor.
+        // Split those wrappers at the caret and carry the other active styles
+        // onto the new run so each toolbar toggle remains independent.
+        if (!enabled && (inlineField === 'underline' || inlineField === 'strike')) {
+          decorationAncestors.forEach((decorated) => {
+            if (!decorated.contains(mark)) return;
+            while (mark.parentElement && mark.parentElement !== decorated && decorated.contains(mark)) {
+              if (!liftOutOfParent(mark)) break;
+            }
+            if (mark.parentElement === decorated) liftOutOfParent(mark);
+          });
         }
 
+        mark.style.fontWeight = caretState.bold ? 'bold' : 'normal';
+        mark.style.fontStyle = caretState.italic ? 'italic' : 'normal';
+        mark.style.textDecorationLine = [caretState.underline && 'underline', caretState.strike && 'line-through']
+          .filter(Boolean).join(' ') || 'none';
+        mark.style.color = computed.color;
+        mark.style.backgroundColor = computed.backgroundColor;
+        mark.style.fontFamily = computed.fontFamily;
+        mark.style.fontSize = computed.fontSize;
+        mark.style.lineHeight = computed.lineHeight;
+        mark.style.verticalAlign = computed.verticalAlign;
+        range.setStart(anchor, anchor.nodeValue.length);
+        range.collapse(true);
+        currentSelection.removeAllRanges();
+        currentSelection.addRange(range);
+
         setFormatState((current) => ({ ...current, [inlineField]: enabled }));
-        editorSurfaceRef.current?.focus();
         saveSelection();
         commitEditorHtml();
         return;
@@ -985,7 +1116,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
     }
     saveSelection();
     syncFormatState();
-    const contentHtml = editorSurfaceRef.current?.innerHTML || '';
+    const contentHtml = getEditorHtml();
     pendingHtmlRef.current = contentHtml;
     setFormattedContent(contentHtml);
     socketRef.current?.emit('formatting-update', { documentId, contentHtml });
@@ -998,7 +1129,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
     editorSurfaceRef.current?.focus();
     saveSelection();
     syncFormatState();
-    const contentHtml = editorSurfaceRef.current?.innerHTML || '';
+    const contentHtml = getEditorHtml();
     pendingHtmlRef.current = contentHtml;
     setFormattedContent(contentHtml);
     socketRef.current?.emit('formatting-update', { documentId, contentHtml });
@@ -1014,7 +1145,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
     editorSurfaceRef.current?.focus();
     saveSelection();
     syncFormatState();
-    const contentHtml = editorSurfaceRef.current?.innerHTML || '';
+    const contentHtml = getEditorHtml();
     pendingHtmlRef.current = contentHtml;
     setFormattedContent(contentHtml);
     socketRef.current?.emit('formatting-update', { documentId, contentHtml });
@@ -1027,7 +1158,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
     editorSurfaceRef.current?.focus();
     saveSelection();
     syncFormatState();
-    const contentHtml = editorSurfaceRef.current?.innerHTML || '';
+    const contentHtml = getEditorHtml();
     pendingHtmlRef.current = contentHtml;
     setFormattedContent(contentHtml);
     socketRef.current?.emit('formatting-update', { documentId, contentHtml });
@@ -1040,7 +1171,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
     editorSurfaceRef.current?.focus();
     saveSelection();
     syncFormatState();
-    const contentHtml = editorSurfaceRef.current?.innerHTML || '';
+    const contentHtml = getEditorHtml();
     pendingHtmlRef.current = contentHtml;
     setFormattedContent(contentHtml);
     socketRef.current?.emit('formatting-update', { documentId, contentHtml });
@@ -1062,7 +1193,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
     changeIndent(direction);
     editorSurfaceRef.current?.focus();
     saveSelection();
-    const contentHtml = editorSurfaceRef.current?.innerHTML || '';
+    const contentHtml = getEditorHtml();
     pendingHtmlRef.current = contentHtml;
     setFormattedContent(contentHtml);
     socketRef.current?.emit('formatting-update', { documentId, contentHtml });
@@ -1117,7 +1248,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
       editorSurfaceRef.current?.focus();
       saveSelection();
       syncFormatState();
-      const contentHtml = editorSurfaceRef.current?.innerHTML || '';
+      const contentHtml = getEditorHtml();
       setFormattedContent(contentHtml);
       socketRef.current?.emit('formatting-update', { documentId, contentHtml });
       event.target.value = '';
@@ -1313,7 +1444,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
   }, [toast]);
 
   function exportHtml() {
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${document?.title || 'Document'}</title></head><body><h1>${document?.title || ''}</h1>${editorSurfaceRef.current?.innerHTML || ''}</body></html>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${document?.title || 'Document'}</title></head><body><h1>${document?.title || ''}</h1>${getEditorHtml()}</body></html>`;
     const blob = new Blob([html], { type: 'text/html' });
     const a = globalThis.document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -1452,7 +1583,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
         body: JSON.stringify({
           message: versionMessage.trim(),
           content: text,
-          contentHtml: editorSurfaceRef.current?.innerHTML || ''
+          contentHtml: getEditorHtml()
         })
       });
       setVersionMessage('');
@@ -1767,8 +1898,8 @@ export default function Editor({ user, onDocumentUnavailable }) {
           )}
           <div className="ai-live-strip">
             <span className="ai-live-dot" />
-            {grammar.isChecking ? 'LanguageTool is checking grammar…' : plagiarism.isChecking ? 'Scanning for similarity…' : `AI originality risk ${plagiarism.report.score || 0}%`}
-            <button type="button" onClick={() => plagiarism.check(text)}>Run plagiarism check</button>
+            {grammar.isChecking ? 'Local LanguageTool is checking grammar…' : plagiarism.isChecking ? 'Comparing with bundled references…' : `Reference similarity ${plagiarism.report.score || 0}%`}
+            <button type="button" onClick={() => plagiarism.check(text)}>Compare references</button>
           </div>
         </>
       )}
