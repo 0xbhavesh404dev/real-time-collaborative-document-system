@@ -9,13 +9,13 @@ function ScoreRing({ score }) {
   const offset = circumference - (safe / 100) * circumference;
   const state = safe >= 70 ? 'high' : safe >= 35 ? 'medium' : 'low';
   return (
-    <div className={`ai-score-ring ai-score-${state}`} aria-label={`Similarity risk ${safe}%`}>
+    <div className={`ai-score-ring ai-score-${state}`} aria-label={`Average text similarity ${safe}%`}>
       <svg viewBox="0 0 80 80" width="80" height="80" aria-hidden="true">
         <circle cx="40" cy="40" r={radius} className="ai-ring-track" />
         <circle cx="40" cy="40" r={radius} className="ai-ring-value" strokeDasharray={circumference} strokeDashoffset={offset} />
       </svg>
       <strong>{safe}%</strong>
-      <span>risk</span>
+      <span>similarity</span>
     </div>
   );
 }
@@ -53,6 +53,17 @@ export default function AIPanel({ user }) {
     autoParaphrase: false,
     citationFinder: false
   });
+  const [providerStatus, setProviderStatus] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch('/ai/status').then((result) => {
+      if (!cancelled) setProviderStatus(result);
+    }).catch(() => {
+      if (!cancelled) setProviderStatus({ geminiConfigured: false, localGrammarAvailable: false });
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const focusText = useMemo(() => selectedText.trim() || documentText.trim(), [selectedText, documentText]);
 
@@ -125,6 +136,9 @@ export default function AIPanel({ user }) {
           body: JSON.stringify({ documentId, text })
         });
         setSummary(result.summary || '');
+        setNotice(result.fallback
+          ? (result.message || 'The AI summary could not be verified. An extractive preview is shown instead.')
+          : 'AI summary is ready. Check it against the source before relying on it.');
         setActiveTab('copilot');
       } else if (action === 'translate') {
         const language = window.prompt('Translate selection to which language?', 'English');
@@ -207,7 +221,6 @@ export default function AIPanel({ user }) {
     }
   }
 
-  const riskLabel = Number(report.score) >= 70 ? 'High similarity' : Number(report.score) >= 35 ? 'Review recommended' : 'Low similarity';
   const matchCount = (report.matches || []).length;
 
   function selectTone(nextTone) {
@@ -222,16 +235,17 @@ export default function AIPanel({ user }) {
     <section className="ai-panel-card">
       <div className="ai-panel-head ai-panel-head-new">
         <div>
-          <div className="ai-kicker"><span className="ai-live-dot" /> AI WRITING COPILOT</div>
+        <div className="ai-kicker"><span className="ai-live-dot" /> AI WRITING COPILOT</div>
           <h3>Write with confidence</h3>
-          <p>{selectedText ? 'Working with your selection' : 'Grammar, style, rewriting & originality in one place'}</p>
+          <p>{selectedText ? 'Working with your selection' : 'Grammar, writing help, and reference similarity'}</p>
         </div>
-        <span className={`ai-model-badge ${isWorking ? 'working' : ''}`}>{isWorking ? 'THINKING…' : 'AI READY'}</span>
+        <span className={`ai-model-badge ${isWorking ? 'working' : ''}`}>{isWorking ? 'WORKING…' : !providerStatus ? 'CHECKING…' : providerStatus.geminiConfigured ? 'GEMINI CONFIGURED' : 'LOCAL TOOLS ONLY'}</span>
       </div>
+      {providerStatus && <p className="ai-provider-status" role="status">Local grammar checker: {providerStatus.localGrammarAvailable ? 'available' : 'unavailable'} · Gemini writing provider: {providerStatus.geminiConfigured ? 'configured' : 'not configured'}</p>}
 
       <div className="ai-mini-tabs ai-mini-tabs-three">
         <button className={activeTab === 'copilot' ? 'active' : ''} onClick={() => setActiveTab('copilot')}>Copilot</button>
-        <button className={activeTab === 'plagiarism' ? 'active' : ''} onClick={() => setActiveTab('plagiarism')}>Originality <span>{report.score}%</span></button>
+        <button className={activeTab === 'plagiarism' ? 'active' : ''} onClick={() => setActiveTab('plagiarism')}>Similarity <span>{report.score}%</span></button>
       </div>
 
       {notice && <div className="ai-notice" role="status">{notice}</div>}
@@ -259,7 +273,7 @@ export default function AIPanel({ user }) {
 
           <div className="ai-action-grid ai-action-grid-new">
             <button onClick={() => runAction('rewrite')}><span className="action-icon violet">✦</span><strong>Improve writing</strong><small>Clarity + stronger flow</small></button>
-            <button onClick={() => runAction('paraphrase')}><span className="action-icon cyan">↺</span><strong>Paraphrase</strong><small>Three alternatives</small></button>
+            <button onClick={() => runAction('paraphrase')}><span className="action-icon cyan">↺</span><strong>Paraphrase</strong><small>Up to three alternatives</small></button>
             <button onClick={() => runAction('grammar')}><span className="action-icon mint">Aa</span><strong>Grammar scan</strong><small>Issues + fixes</small></button>
             <button onClick={() => runAction('summarize')}><span className="action-icon blue">≡</span><strong>Summarize</strong><small>2–3 sentence brief</small></button>
           </div>
@@ -324,15 +338,15 @@ export default function AIPanel({ user }) {
           )}
 
           <div className="ai-quick-originality">
-            <div><span className="mini-orb">◎</span><div><strong>Originality check</strong><small>{matchCount} matched passage{matchCount === 1 ? '' : 's'} · {report.scannedSentences || 0} sentences</small></div></div>
-            <button onClick={() => runAction('plagiarism')}>Scan now</button>
+            <div><span className="mini-orb">◎</span><div><strong>Reference similarity</strong><small>{matchCount} {matchCount === 1 ? 'possible match' : 'possible matches'} · {report.scannedSentences || 0} sentences</small></div></div>
+            <button onClick={() => runAction('plagiarism')}>Compare text</button>
           </div>
 
           <div className="ai-settings ai-settings-new">
             <div className="ai-section-heading">AI controls</div>
             <Toggle label="Autocomplete suggestions" checked={settings.autocomplete} onChange={() => setSettings((current) => { const next = !current.autocomplete; window.dispatchEvent(new CustomEvent('ai-settings-changed', { detail: { autocomplete: next } })); return { ...current, autocomplete: next }; })} />
             <Toggle label="Live grammar assistant" checked={settings.grammarAssistant} onChange={() => setSettings((current) => { const next = !current.grammarAssistant; window.dispatchEvent(new CustomEvent('ai-settings-changed', { detail: { grammarAssistant: next } })); return { ...current, grammarAssistant: next }; })} />
-            <Toggle label="Plagiarism scan" checked={settings.plagiarism} onChange={() => setSettings((current) => { const next = !current.plagiarism; window.dispatchEvent(new CustomEvent('ai-settings-changed', { detail: { plagiarism: next } })); return { ...current, plagiarism: next }; })} />
+            <Toggle label="Reference similarity check" checked={settings.plagiarism} onChange={() => setSettings((current) => { const next = !current.plagiarism; window.dispatchEvent(new CustomEvent('ai-settings-changed', { detail: { plagiarism: next } })); return { ...current, plagiarism: next }; })} />
           </div>
         </div>
       )}
@@ -341,22 +355,22 @@ export default function AIPanel({ user }) {
         <div className="ai-panel-body ai-originality-body">
           <div className="originality-hero">
             <div>
-              <span className="originality-eyebrow">DOCUMENT ORIGINALITY</span>
-              <div className="originality-title">{riskLabel}</div>
-              <p>Similarity is estimated against the configured local corpus.</p>
+              <span className="originality-eyebrow">REFERENCE SIMILARITY</span>
+              <div className="originality-title">{Number(report.score) >= 70 ? 'Many similar words' : Number(report.score) >= 35 ? 'Some similar wording' : 'Little similar wording'}</div>
+              <p>Average wording similarity against the small reference set bundled with this app. This is not a web search or AI detector.</p>
             </div>
             <ScoreRing score={report.score} />
           </div>
 
           <div className="originality-stats">
-            <div><strong>{report.scannedSentences || 0}</strong><span>sentences scanned</span></div>
-            <div><strong>{matchCount}</strong><span>matched passages</span></div>
-            <div><strong>{report.provider || 'local'}</strong><span>provider</span></div>
+            <div><strong>{report.score || 0}%</strong><span>average similarity</span></div>
+            <div><strong>{report.scannedSentences || 0}</strong><span>sentences compared</span></div>
+            <div><strong>{matchCount}</strong><span>strong matches</span></div>
           </div>
 
           <div className="originality-actions">
-            <button className="ai-primary-btn ai-primary-btn-wide" onClick={() => runAction('plagiarism')} disabled={isWorking}>{isWorking ? 'Scanning…' : 'Run originality scan'}</button>
-            <span className="originality-helper">Threshold for a flag: 70% similarity</span>
+            <button className="ai-primary-btn ai-primary-btn-wide" onClick={() => runAction('plagiarism')} disabled={isWorking}>{isWorking ? 'Comparing…' : 'Compare with references'}</button>
+            <span className="originality-helper">A passage appears below when wording similarity reaches 70%.</span>
           </div>
 
           <div className="ai-section-heading">Matched sources</div>
@@ -375,12 +389,12 @@ export default function AIPanel({ user }) {
           {(!report.matches || report.matches.length === 0) && (
             <div className="ai-clean-result">
               <div>✓</div>
-              <strong>No high-similarity passages found</strong>
-              <span>Run another scan after writing more content.</span>
+            <strong>No strong matches in the bundled references</strong>
+            <span>This result does not check the public web.</span>
             </div>
           )}
 
-          <div className="plagiarism-disclaimer">This is a similarity detector, not a guarantee of web-wide plagiarism status. External sources can be added through the configured provider.</div>
+          <div className="plagiarism-disclaimer">This compares wording with a small set of bundled reference text only. It cannot confirm originality, detect AI writing, or check sources across the web.</div>
         </div>
       )}
     </section>

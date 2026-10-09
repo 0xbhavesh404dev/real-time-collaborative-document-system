@@ -49,8 +49,35 @@ export default function ChannelView({ user }) {
   }
 
   async function leaveChannel() {
-    try { await apiFetch(`/channels/${channelId}/leave`, { method: 'POST' }); navigate('/dashboard'); }
+    try {
+      await apiFetch(`/channels/${channelId}/leave`, { method: 'POST' });
+      window.dispatchEvent(new CustomEvent('workspace-documents-removed', { detail: { channelId, documentIds: documents.map((item) => item.id) } }));
+      navigate('/dashboard');
+    }
     catch (requestError) { setError(requestError.message); }
+  }
+
+  async function removeMember(member) {
+    if (!window.confirm(`Remove ${member.username} from this channel? They will lose access to its documents.`)) return;
+    try {
+      await apiFetch(`/channels/${channelId}/members/${member.id}`, { method: 'DELETE' });
+      setMembers((current) => current.filter((item) => String(item.id) !== String(member.id)));
+      if (String(member.id) === String(user.id)) {
+        window.dispatchEvent(new CustomEvent('workspace-documents-removed', { detail: { channelId, documentIds: documents.map((item) => item.id) } }));
+        navigate('/dashboard');
+      } else {
+        setError(`${member.username} was removed from the channel.`);
+      }
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function deleteDocument(document) {
+    try {
+      await apiFetch(`/documents/${document.id}`, { method: 'DELETE' });
+      setDocuments((current) => current.filter((item) => String(item.id) !== String(document.id)));
+      window.dispatchEvent(new CustomEvent('workspace-documents-removed', { detail: { documentIds: [document.id] } }));
+      setError(`“${document.title}” was deleted.`);
+    } catch (requestError) { setError(requestError.message); }
   }
 
   async function inviteMember() {
@@ -73,12 +100,16 @@ export default function ChannelView({ user }) {
 
   async function deleteChannel() {
     if (!window.confirm('Delete this channel and its documents?')) return;
-    try { await apiFetch(`/channels/${channelId}`, { method: 'DELETE' }); navigate('/dashboard'); }
+    try {
+      await apiFetch(`/channels/${channelId}`, { method: 'DELETE' });
+      window.dispatchEvent(new CustomEvent('workspace-documents-removed', { detail: { channelId, documentIds: documents.map((item) => item.id) } }));
+      navigate('/dashboard');
+    }
     catch (requestError) { setError(requestError.message); }
   }
 
   if (!channel) return <main className="loading-state">Loading channel...</main>;
   const canEdit = ['admin', 'editor'].includes(channel.role);
 
-  return <main className="app-shell"><header className="topbar"><Link className="brand" to="/dashboard">collab<span>•</span>docs</Link><Link className="text-button" to="/dashboard">← All channels</Link></header><section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">CHANNEL / {channel.role.toUpperCase()}</p><h1>{channel.name}</h1><p className="muted">{channel.description || 'A focused place for shared work.'}</p></div><div className="button-row"><button className="secondary-button" onClick={() => setShowInviteForm(!showInviteForm)} disabled={channel.role !== 'admin'}>Invite</button><button className="secondary-button" onClick={leaveChannel}>Leave</button>{channel.role === 'admin' && <button className="secondary-button" onClick={deleteChannel}>Delete</button>}</div></div>{error && <p className="notice">{error}</p>}{showInviteForm && <form className="inline-form" onSubmit={(event) => { event.preventDefault(); inviteMember(); }}><input autoFocus required type="email" placeholder="Member email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} /><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}><option value="editor">Editor</option><option value="viewer">Viewer</option><option value="admin">Admin</option></select><button className="primary-button compact" type="submit">Send invite</button><button className="text-button" type="button" onClick={() => setShowInviteForm(false)}>Cancel</button></form>}{showDocumentForm && <form className="inline-form" onSubmit={createDocument}><input autoFocus required placeholder="Document title" value={documentTitle} onChange={(event) => setDocumentTitle(event.target.value)} /><button className="primary-button compact" type="submit">Create document</button><button className="text-button" type="button" onClick={() => setShowDocumentForm(false)}>Cancel</button></form>}{channel.role === 'admin' && invitations.length > 0 && <section className="panel member-panel" style={{ marginTop: '16px' }}><div className="panel-heading"><div><p className="eyebrow">INVITATIONS</p><h2>Channel invitations</h2></div><span className="count-badge">{invitations.length} total</span></div><div className="member-list">{invitations.map((invitation) => <div className="member-row" key={invitation.id} style={{ gap: '10px' }}><span className="member-name">{invitation.invitee_email}</span><span className="role-badge">{invitation.role}</span><span className="role-badge" style={{ textTransform: 'capitalize' }}>{invitation.status}</span><span className="muted" style={{ fontSize: '11px', marginLeft: 'auto' }}>by {invitation.inviter_username}</span>{invitation.status === 'pending' && <button className="text-button" onClick={() => revokeInvitation(invitation)}>Revoke</button>}</div>)}</div></section>}<div className="two-column"><DocumentList documents={documents} canEdit={canEdit} onCreate={() => setShowDocumentForm(true)} /><UserList members={members} onlineUsers={[]} /></div></section></main>;
+  return <main className="app-shell"><nav className="channel-subnav" aria-label="Channel navigation"><Link className="channel-brand" to="/dashboard">collab<span>•</span>docs</Link><Link className="channel-back" to="/dashboard">← All channels</Link></nav><section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">CHANNEL / {channel.role.toUpperCase()}</p><h1>{channel.name}</h1><p className="muted">{channel.description || 'A focused place for shared work.'}</p></div><div className="button-row"><button className="secondary-button" onClick={() => setShowInviteForm(!showInviteForm)} disabled={channel.role !== 'admin'}>Invite</button><button className="secondary-button" onClick={leaveChannel}>Leave</button>{channel.role === 'admin' && <button className="secondary-button" onClick={deleteChannel}>Delete</button>}</div></div>{error && <p className="notice">{error}</p>}{showInviteForm && <form className="inline-form" onSubmit={(event) => { event.preventDefault(); inviteMember(); }}><input autoFocus required type="email" placeholder="Member email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} /><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}><option value="editor">Editor</option><option value="viewer">Viewer</option><option value="admin">Admin</option></select><button className="primary-button compact" type="submit">Send invite</button><button className="text-button" type="button" onClick={() => setShowInviteForm(false)}>Cancel</button></form>}{showDocumentForm && <form className="inline-form" onSubmit={createDocument}><input autoFocus required placeholder="Document title" value={documentTitle} onChange={(event) => setDocumentTitle(event.target.value)} /><button className="primary-button compact" type="submit">Create document</button><button className="text-button" type="button" onClick={() => setShowDocumentForm(false)}>Cancel</button></form>}{channel.role === 'admin' && invitations.length > 0 && <section className="panel member-panel" style={{ marginTop: '16px' }}><div className="panel-heading"><div><p className="eyebrow">INVITATIONS</p><h2>Channel invitations</h2></div><span className="count-badge">{invitations.length} total</span></div><div className="member-list">{invitations.map((invitation) => <div className="member-row" key={invitation.id} style={{ gap: '10px' }}><span className="member-name">{invitation.invitee_email}</span><span className="role-badge">{invitation.role}</span><span className="role-badge" style={{ textTransform: 'capitalize' }}>{invitation.status}</span><span className="muted" style={{ fontSize: '11px', marginLeft: 'auto' }}>by {invitation.inviter_username}</span>{invitation.status === 'pending' && <button className="text-button" onClick={() => revokeInvitation(invitation)}>Revoke</button>}</div>)}</div></section>}<div className="two-column"><DocumentList documents={documents} canEdit={canEdit} onCreate={() => setShowDocumentForm(true)} onDelete={deleteDocument} /><UserList members={members} onlineUsers={[]} canManageMembers={channel.role === 'admin'} ownerId={channel.owner_id} onRemoveMember={removeMember} /></div></section></main>;
 }

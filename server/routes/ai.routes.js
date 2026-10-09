@@ -9,6 +9,15 @@ import { analyzePlagiarism } from '../services/plagiarism.service.js';
 const router = express.Router();
 router.use(requireAuth);
 
+router.get('/status', async (_req, res) => {
+  const localGrammarAvailable = await checkLanguageToolHealth();
+  return res.json({
+    geminiConfigured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'your-gemini-api-key'),
+    localGrammarAvailable,
+    grammarProvider: 'LanguageTool'
+  });
+});
+
 const rateBuckets = new Map();
 const WINDOW_MS = 60_000;
 // This budget applies to Gemini-backed writing actions. Local LanguageTool
@@ -118,9 +127,9 @@ router.post('/summarize', rateLimit, async (req, res) => {
   const text = requiredText(req, res, 24000);
   if (!text) return;
   try {
-    const summary = await summarize(text);
-    await audit(req.body.documentId, req.user.id, 'summarize', text, summary);
-    return res.json({ summary });
+    const result = await summarize(text);
+    await audit(req.body.documentId, req.user.id, 'summarize', text, result.summary);
+    return res.json(result);
   } catch (error) {
     console.error('Summarize failed:', error);
     return res.json({ summary: 'The document is ready for AI summarization once an AI provider is configured.', fallback: true });
@@ -137,7 +146,7 @@ router.post('/translate', rateLimit, async (req, res) => {
     return res.json({ translated, language });
   } catch (error) {
     console.error('Translate failed:', error);
-    return res.json({ translated: text, language: req.body?.language || 'English', fallback: true });
+    return res.status(503).json({ message: 'Translation is unavailable. Configure the Gemini provider and try again.' });
   }
 });
 
