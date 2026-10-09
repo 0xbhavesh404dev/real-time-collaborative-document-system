@@ -127,11 +127,13 @@ The CRDT remains educational rather than production-grade, awareness is basic, a
 
 ### Editor and AI interaction
 
-While an editor types, the live grammar assistant waits briefly for a stable draft and can present an exact-text correction with **Accept** and **Reject** actions. Accept replaces only the matching phrase through the editor change pipeline, while Reject dismisses that suggestion for the current context. Autocomplete remains available as a separate ghost-text flow with Tab/Escape controls.
+While an editor types, the live grammar assistant waits briefly for a stable draft and can present an exact-text correction with **Accept** and **Reject** actions. Accept replaces only the matching phrase through the editor change pipeline, while Reject dismisses that suggestion for the current context. Autocomplete remains available as a separate ghost-text flow with explicit Accept/Reject buttons and Tab/Escape controls; it never inserts a completion before acceptance.
+
+Improve Writing presents an original/improved comparison with Accept Changes, Reject, and Regenerate actions. Paraphrase presents up to three independently applicable alternatives. Summaries can be copied, inserted at the saved editor cursor, or dismissed. The **Demo Mode** tab contains clearly labeled sample responses and a separate preview; accepting or rejecting a demo suggestion never edits the real document. Exiting or resetting Demo Mode returns to normal editing.
 
 The toolbar now includes text styles, font family/size, bold/italic/underline/strike, text and highlight colors, superscript/subscript, four alignments, bullet/numbered/check lists, indentation, quote/code block, divider, links, tables, line height, image insertion, AI rewrite, and clear formatting.
 
-The reference similarity panel shows average wording similarity against the bundled corpus and lists sentence matches above its threshold. It is not a web-wide plagiarism check or an AI-writing detector.
+The reference similarity panel can compare a document or selection with either the bundled corpus or text pasted by the user. Supplied-text comparisons use a local sentence-level word-similarity calculation and show matching passages and shared terms. It is not a web-wide plagiarism check or an AI-writing detector.
 
 ## AI Copilot setup
 
@@ -144,7 +146,9 @@ The editor now includes AI writing assistance on the right rail and a floating A
 - `POST /api/ai/summarize` — a concise 2–3 sentence document summary.
 - `POST /api/ai/plagiarism` — local TF-IDF/cosine wording similarity scan against the bundled educational corpus.
 
-Set `GEMINI_API_KEY` and `AI_MODEL` in `.env` to enable live Gemini responses. When the key is not configured, the server uses a deterministic fallback so the UI remains demonstrable without an external API.
+The plagiarism route also accepts an optional `referenceText` field (up to 24,000 characters) to compare against supplied reference text locally. Demo Mode uses labeled in-browser examples and makes no provider request.
+
+Set `GEMINI_API_KEY` and optionally `AI_MODEL` in the server `.env` to enable live Gemini responses. LanguageTool is used for ordinary grammar checks when available. If Gemini is not configured or unavailable, the UI reports the provider limitation; summaries may show a clearly labeled extractive preview. Demo Mode is separate and always labels its sample content as simulated.
 
 Gemini-backed writing requests use a per-user rate limit controlled by `AI_REQUESTS_PER_MINUTE` (60 per minute by default). AI outputs are audited in PostgreSQL when the `ai_suggestions` table is available; reference similarity reports are stored in `plagiarism_reports`.
 

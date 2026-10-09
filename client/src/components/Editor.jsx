@@ -349,7 +349,8 @@ export default function Editor({ user, onDocumentUnavailable }) {
       const targetStillUnambiguous = original
         && countExactOccurrences(String(expectedSourceText || ''), original) === 1
         && countExactOccurrences(editorTextNow, original) === 1;
-      if ((expectedDocumentId != null && String(expectedDocumentId) !== String(documentId)) || (sourceChanged && !targetStillUnambiguous)) {
+      const staleWholeDocumentRewrite = replaceDocument && sourceChanged;
+      if ((expectedDocumentId != null && String(expectedDocumentId) !== String(documentId)) || staleWholeDocumentRewrite || (sourceChanged && !targetStillUnambiguous)) {
         event.detail.reason = 'The document changed after this suggestion. The latest text is being checked.';
         setToast({ message: event.detail.reason, type: 'info' });
         grammar.check(editorSurfaceRef.current?.innerText || textRef.current, true);
@@ -372,6 +373,23 @@ export default function Editor({ user, onDocumentUnavailable }) {
       if (!applied && !event.detail.reason) setToast({ message: 'Could not find the original text. Select it again and retry.', type: 'error' });
     };
     const onAcceptAutocomplete = (event) => insertAutocomplete(event.detail?.text || '');
+    const onInsertAiText = (event) => {
+      const value = String(event.detail?.text || '').trim();
+      const editorSurface = editorSurfaceRef.current;
+      if (!value || readOnly || !editorSurface) return;
+      // Summary insertion must not replace a selected passage. Put it after the
+      // document and create a collapsed range before using the normal input path.
+      const range = globalThis.document.createRange();
+      range.selectNodeContents(editorSurface);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      selectionRef.current = range.cloneRange();
+      saveSelection();
+      insertPlainText(value);
+      setToast({ message: 'Inserted into the document', type: 'ok' });
+    };
     const onAiSettings = (event) => {
       const next = event.detail || {};
       setAiSettings((current) => ({ ...current, ...next }));
@@ -398,12 +416,14 @@ export default function Editor({ user, onDocumentUnavailable }) {
     const onRejectGrammar = () => grammar.reject();
     window.addEventListener('ai-replace-selection', onReplace);
     window.addEventListener('ai-accept-autocomplete', onAcceptAutocomplete);
+    window.addEventListener('ai-insert-text', onInsertAiText);
     window.addEventListener('ai-settings-changed', onAiSettings);
     window.addEventListener('ai-accept-grammar', onAcceptGrammar);
     window.addEventListener('ai-reject-grammar', onRejectGrammar);
     return () => {
       window.removeEventListener('ai-replace-selection', onReplace);
       window.removeEventListener('ai-accept-autocomplete', onAcceptAutocomplete);
+      window.removeEventListener('ai-insert-text', onInsertAiText);
       window.removeEventListener('ai-settings-changed', onAiSettings);
       window.removeEventListener('ai-accept-grammar', onAcceptGrammar);
       window.removeEventListener('ai-reject-grammar', onRejectGrammar);
@@ -1266,6 +1286,21 @@ export default function Editor({ user, onDocumentUnavailable }) {
       setSelectedImage(null);
       const editorSurface = editorSurfaceRef.current;
       if (!readOnly && editorSurface) {
+        // A click event fires after mouseup, which is also when the browser has
+        // just established a drag selection. Replacing that range with the
+        // caret at the click point makes mouse selection appear impossible.
+        // Keep any selection that belongs to the editor and only synthesize a
+        // caret for an ordinary collapsed click (including blank canvas space).
+        const activeSelection = globalThis.getSelection();
+        if (activeSelection?.rangeCount && !activeSelection.isCollapsed
+          && editorSurface.contains(activeSelection.anchorNode)
+          && editorSurface.contains(activeSelection.focusNode)) {
+          saveSelection();
+          sendCursor(event);
+          syncFormatState();
+          return;
+        }
+
         let range = null;
         if (globalThis.document.caretRangeFromPoint) {
           range = globalThis.document.caretRangeFromPoint(event.clientX, event.clientY);
@@ -1885,6 +1920,12 @@ export default function Editor({ user, onDocumentUnavailable }) {
 
       {aiEnabled && (
         <>
+          {autocomplete.isLoading && aiSettings.autocomplete && (
+            <div className="ai-ghost-panel ai-ghost-loading" role="status" aria-live="polite">
+              <div className="ai-ghost-label"><span className="ai-sparkle">✦</span> AI Suggest</div>
+              <div className="ai-ghost-text">Checking for a useful continuation…</div>
+            </div>
+          )}
           {autocomplete.suggestion && (
             <div className="ai-ghost-panel" role="status" aria-live="polite">
               <div className="ai-ghost-label"><span className="ai-sparkle">✦</span> AI Suggest</div>
