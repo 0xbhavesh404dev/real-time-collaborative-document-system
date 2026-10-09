@@ -13,7 +13,7 @@ export default function AICommandBar({ disabled = false, selectedText = '' }) {
       <button type="button" onClick={() => command('rewrite')} disabled={disabled} aria-label="Improve writing">Improve</button>
       <button type="button" onClick={() => command('paraphrase')} disabled={disabled}>Paraphrase</button>
       <button type="button" onClick={() => command('grammar')} disabled={disabled}>Grammar</button>
-      <button type="button" onClick={() => command('plagiarism')} disabled={disabled}>Plagiarism</button>
+      <button type="button" onClick={() => command('plagiarism')} disabled={disabled}>Similarity</button>
       <button type="button" onClick={() => command('summarize')} disabled={disabled}>Summarize</button>
       <span className="ai-divider" />
       <button type="button" onClick={() => command('translate')} disabled={disabled}>Translate</button>

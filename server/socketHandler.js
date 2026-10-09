@@ -68,6 +68,45 @@ export function flushAllDocumentContent() {
   return Promise.all(Array.from(dirtyContents.keys()).map((key) => flushDocumentContent(key)));
 }
 
+export function forgetDocument(documentId) {
+  const key = String(documentId);
+  const pending = dirtyContents.get(key);
+  if (pending) clearTimeout(pending.timer);
+  dirtyContents.delete(key);
+  removeActiveCRDT(documentId);
+  if (!socketServer) return;
+  const room = roomName(documentId);
+  socketServer.to(room).emit('document-deleted', { documentId });
+  for (const socketId of socketServer.sockets.adapter.rooms.get(room) || []) {
+    const socket = socketServer.sockets.sockets.get(socketId);
+    if (socket) leaveDocument(socket, documentId, socketServer);
+  }
+}
+
+export function revokeChannelMember(userId, channelDocumentIds = []) {
+  if (!socketServer) return;
+  const documentIds = new Set(channelDocumentIds.map(String));
+  for (const socket of socketServer.sockets.sockets.values()) {
+    if (String(socket.user?.id) !== String(userId)) continue;
+    for (const documentId of documentIds) {
+      if (!socket.data.documents.has(documentId)) continue;
+      socket.emit('document-access-revoked', { documentId });
+      leaveDocument(socket, documentId, socketServer);
+    }
+  }
+}
+
+export function syncChannelMemberRole(userId, role, channelDocumentIds = []) {
+  if (!socketServer) return;
+  const documentIds = new Set(channelDocumentIds.map(String));
+  for (const socket of socketServer.sockets.sockets.values()) {
+    if (String(socket.user?.id) !== String(userId)) continue;
+    for (const documentId of documentIds) {
+      if (socket.data.documents.has(documentId)) socket.data.roles[documentId] = role;
+    }
+  }
+}
+
 function flushFormatting(bucketKey) {
   const bucket = formattingBuckets.get(bucketKey);
   if (!bucket || bucket.inFlight) return;

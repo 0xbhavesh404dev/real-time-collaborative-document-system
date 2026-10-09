@@ -25,7 +25,7 @@ Whole-document replacement can overwrite another user's edit. This project repre
 - Character-based custom CRDT with unique ids, tombstones, pending operations, deterministic ordering, and idempotency.
 - Socket.IO document rooms with initial sync, operation replication, presence, basic cursor/typing events.
 - Save, preview, and restore document versions. Restore creates a new version and keeps old versions.
-- Custom contentEditable rich-text editor with a full formatting toolbar, live grammar suggestions, autocomplete, originality scanning, paraphrase/rewrite actions, and a right-side AI workspace.
+- Custom contentEditable rich-text editor with a full formatting toolbar, live grammar suggestions, autocomplete, bundled-reference similarity checks, paraphrase/rewrite actions, and a right-side AI workspace.
 
 ## Technology stack
 
@@ -103,7 +103,7 @@ Manual test plan: register two users, create a channel, join it from a second br
 
 ## Limitations and future work
 
-The CRDT remains educational rather than production-grade, awareness is basic, and active CRDTs are in one server's memory. The AI originality checker is corpus-based unless an external provider is configured. Offline multi-server synchronization, semantic conflict resolution, email service, and large-scale deployment are outside this capstone scope. Future work could add rich text, comments, notifications, attachments, advanced search, offline support, semantic conflict visualization, and multi-server scaling.
+The CRDT remains educational rather than production-grade, awareness is basic, and active CRDTs are in one server's memory. The reference similarity check compares text only with the small corpus bundled in this project; it does not search the web, establish originality, or detect AI-written text. Offline multi-server synchronization, semantic conflict resolution, email service, and large-scale deployment are outside this capstone scope. Future work could add richer reference sources, comments, attachments, offline support, semantic conflict visualization, and multi-server scaling.
 
 ## Viva questions
 
@@ -131,7 +131,7 @@ While an editor types, the live grammar assistant waits briefly for a stable dra
 
 The toolbar now includes text styles, font family/size, bold/italic/underline/strike, text and highlight colors, superscript/subscript, four alignments, bullet/numbered/check lists, indentation, quote/code block, divider, links, tables, line height, image insertion, AI rewrite, and clear formatting.
 
-The originality panel shows a similarity-risk ring, scan statistics, matched passages, source links, per-source match meters, and a one-click rewrite action.
+The reference similarity panel shows average wording similarity against the bundled corpus and lists sentence matches above its threshold. It is not a web-wide plagiarism check or an AI-writing detector.
 
 ## AI Copilot setup
 
@@ -140,11 +140,12 @@ The editor now includes AI writing assistance on the right rail and a floating A
 - `POST /api/ai/autocomplete` — debounced inline continuation (last 500 characters).
 - `POST /api/ai/paraphrase` — three rewrite alternatives for academic, casual, or concise tone.
 - `POST /api/ai/grammar` — grammar, spelling, and clarity suggestions.
+- `GET /api/ai/status` — reports whether local LanguageTool is reachable and whether Gemini is configured; it never returns credentials.
 - `POST /api/ai/summarize` — a concise 2–3 sentence document summary.
-- `POST /api/ai/plagiarism` — local TF-IDF/cosine similarity scan against the bundled educational corpus.
+- `POST /api/ai/plagiarism` — local TF-IDF/cosine wording similarity scan against the bundled educational corpus.
 
 Set `GEMINI_API_KEY` and `AI_MODEL` in `.env` to enable live Gemini responses. When the key is not configured, the server uses a deterministic fallback so the UI remains demonstrable without an external API.
 
-AI suggestion requests are protected by a per-user 20 requests/minute in-memory limiter. AI outputs are audited in PostgreSQL when the `ai_suggestions` table is available; plagiarism reports are stored in `plagiarism_reports`.
+Gemini-backed writing requests use a per-user rate limit controlled by `AI_REQUESTS_PER_MINUTE` (60 per minute by default). AI outputs are audited in PostgreSQL when the `ai_suggestions` table is available; reference similarity reports are stored in `plagiarism_reports`.
 
 The existing right-side Version History / Collaborators / Operations rail remains intact. The AI Copilot card is placed above it so AI functionality is available without removing the CRDT monitoring panels.

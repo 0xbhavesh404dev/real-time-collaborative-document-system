@@ -2,6 +2,7 @@ import express from 'express';
 import { query } from './db.js';
 import { requireAuth } from './auth.js';
 import { getMembership } from './channels.js';
+import { forgetDocument } from './socketHandler.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -93,6 +94,27 @@ router.patch('/documents/:id', async (req, res) => {
     return res.json({ document: result.rows[0] });
   } catch {
     return res.status(500).json({ message: 'Unable to rename document' });
+  }
+});
+
+router.delete('/documents/:id', async (req, res) => {
+  try {
+    const document = await findDocument(req.params.id, req.user.id);
+    if (!document) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+    if (!canEdit(document.role)) {
+      return res.status(403).json({ message: 'You do not have permission to delete this document' });
+    }
+
+    const result = await query('DELETE FROM documents WHERE id = $1 RETURNING id', [req.params.id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+    forgetDocument(req.params.id);
+    return res.json({ message: 'Document deleted' });
+  } catch {
+    return res.status(500).json({ message: 'Unable to delete document' });
   }
 });
 

@@ -23,6 +23,7 @@ Protected requests should use the current user's token; user IDs are never trust
 | POST | `/api/channels/:channelId/documents` | Create document; body: title |
 | GET | `/api/documents/:id` | Open document |
 | PATCH | `/api/documents/:id` | Rename document; body: title |
+| DELETE | `/api/documents/:id` | Delete a document and its saved history (admin/editor) |
 | POST | `/api/documents/:id/versions` | Save snapshot; body: message |
 | GET | `/api/documents/:id/versions` | List snapshots newest first |
 | GET | `/api/versions/:id` | Preview one snapshot |

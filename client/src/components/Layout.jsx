@@ -16,9 +16,7 @@ export default function Layout({ user, onLogout, children }) {
   const [channelName, setChannelName] = useState('Channel');
   const [resolvedChannelId, setResolvedChannelId] = useState(channelId || '');
   const [documentTitle, setDocumentTitle] = useState('Document');
-  const [recentDocuments, setRecentDocuments] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(`syncpad_recent_documents_${user.id}`) || '[]'); } catch { return []; }
-  });
+  const [recentDocuments, setRecentDocuments] = useState([]);
   const [storageDetailsOpen, setStorageDetailsOpen] = useState(false);
   const [storage, setStorage] = useState(null);
   const [storageUnavailable, setStorageUnavailable] = useState(false);
@@ -36,6 +34,79 @@ export default function Layout({ user, onLogout, children }) {
   const [profileMessage, setProfileMessage] = useState('');
   const [profileError, setProfileError] = useState('');
   const profilePanelRef = useRef(null);
+  const [globalSearch, setGlobalSearch] = useState('');
+  const [globalSearchResults, setGlobalSearchResults] = useState([]);
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const globalSearchRef = useRef(null);
+  const globalSearchContainerRef = useRef(null);
+
+  useEffect(() => {
+    let active = true;
+    const storageKey = `syncpad_recent_documents_${user.id}`;
+    const refreshRecentDocuments = async () => {
+      const startedAt = Date.now();
+      let saved = [];
+      try {
+        const parsed = JSON.parse(localStorage.getItem(storageKey) || '[]');
+        if (Array.isArray(parsed)) saved = parsed.filter((item) => item?.id != null).slice(0, 10);
+      } catch { /* discard malformed recent-document data */ }
+
+      const checked = await Promise.all(saved.map(async (item) => {
+        try {
+          const { document } = await apiFetch(`/documents/${item.id}`);
+          if (!document) return null;
+          const { channel } = await apiFetch(`/channels/${document.channel_id}`);
+          return {
+            ...item,
+            id: String(document.id),
+            title: document.title,
+            channel: channel.name,
+            channelId: String(channel.id),
+          };
+        } catch {
+          // Deleted documents, deleted channels, and removed memberships all
+          // make the document unavailable and should remove its stale link.
+          return null;
+        }
+      }));
+      if (!active) return;
+      const valid = checked.filter(Boolean);
+      setRecentDocuments((current) => {
+        const byId = new Map(valid.map((item) => [String(item.id), item]));
+        current.filter((item) => Number(item.visitedAt || 0) >= startedAt)
+          .forEach((item) => byId.set(String(item.id), item));
+        const next = [...byId.values()]
+          .sort((a, b) => Number(b.visitedAt || 0) - Number(a.visitedAt || 0))
+          .slice(0, 5);
+        try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* optional convenience */ }
+        return next;
+      });
+    };
+
+    setRecentDocuments([]);
+    refreshRecentDocuments();
+    window.addEventListener('focus', refreshRecentDocuments);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', refreshRecentDocuments);
+    };
+  }, [user.id]);
+
+  useEffect(() => {
+    const onDocumentsRemoved = (event) => {
+      const documentIds = new Set((event.detail?.documentIds || []).map(String));
+      const removedChannelId = event.detail?.channelId == null ? null : String(event.detail.channelId);
+      setRecentDocuments((current) => {
+        const next = current.filter((item) => !documentIds.has(String(item.id))
+          && !(removedChannelId && String(item.channelId) === removedChannelId));
+        try { localStorage.setItem(`syncpad_recent_documents_${user.id}`, JSON.stringify(next)); } catch { /* optional convenience */ }
+        return next;
+      });
+    };
+    window.addEventListener('workspace-documents-removed', onDocumentsRemoved);
+    return () => window.removeEventListener('workspace-documents-removed', onDocumentsRemoved);
+  }, [user.id]);
 
   async function submitPasswordChange(event) {
     event.preventDefault();
@@ -93,6 +164,15 @@ export default function Layout({ user, onLogout, children }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!globalSearchOpen) return undefined;
+    const onPointerDown = (event) => {
+      if (!globalSearchContainerRef.current?.contains(event.target)) setGlobalSearchOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [globalSearchOpen]);
+
   async function respondToInvitation(invitation, action) {
     setRespondingTo(invitation.id);
     setNotificationsError('');
@@ -145,13 +225,13 @@ export default function Layout({ user, onLogout, children }) {
 
   useEffect(() => {
     if (!documentId || documentTitle === 'Document') return;
-    const item = { id: String(documentId), title: documentTitle, channel: channelName, visitedAt: Date.now() };
+    const item = { id: String(documentId), title: documentTitle, channel: channelName, channelId: String(resolvedChannelId || channelId || ''), visitedAt: Date.now() };
     setRecentDocuments((current) => {
       const next = [item, ...current.filter((entry) => String(entry.id) !== item.id)].slice(0, 5);
       try { localStorage.setItem(`syncpad_recent_documents_${user.id}`, JSON.stringify(next)); } catch { /* optional convenience */ }
       return next;
     });
-  }, [channelName, documentId, documentTitle, user.id]);
+  }, [channelId, channelName, documentId, documentTitle, resolvedChannelId, user.id]);
 
   useEffect(() => {
     if (!sidebarOpen) return undefined;
@@ -195,6 +275,56 @@ export default function Layout({ user, onLogout, children }) {
   }, [profileOpen]);
 
   useEffect(() => { loadNotifications(); }, []);
+
+  useEffect(() => {
+    const query = globalSearch.trim().toLocaleLowerCase();
+    if (query.length < 2) {
+      setGlobalSearchResults([]);
+      setGlobalSearchLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setGlobalSearchLoading(true);
+      try {
+        const { channels = [] } = await apiFetch('/channels');
+        const channelResults = channels
+          .filter((channel) => `${channel.name} ${channel.description || ''}`.toLocaleLowerCase().includes(query))
+          .map((channel) => ({ type: 'Channel', label: channel.name, detail: channel.description || channel.role, href: `/channel/${channel.id}` }));
+        const scopedResults = await Promise.all(channels.map(async (channel) => {
+          const [documentResponse, memberResponse] = await Promise.all([
+            apiFetch(`/channels/${channel.id}/documents`).catch(() => ({ documents: [] })),
+            apiFetch(`/channels/${channel.id}/members`).catch(() => ({ members: [] }))
+          ]);
+          return {
+            documents: (documentResponse.documents || []).filter((item) => `${item.title} ${channel.name}`.toLocaleLowerCase().includes(query))
+              .map((item) => ({ type: 'Document', label: item.title, detail: channel.name, href: `/document/${item.id}` })),
+            people: (memberResponse.members || []).filter((item) => `${item.username} ${item.email}`.toLocaleLowerCase().includes(query))
+              .map((item) => ({ type: 'Person', label: item.username, detail: `${item.role} · ${channel.name}`, href: `/channel/${channel.id}` }))
+          };
+        }));
+        if (!cancelled) setGlobalSearchResults([...channelResults, ...scopedResults.flatMap((item) => [...item.documents, ...item.people])].slice(0, 8));
+      } catch {
+        if (!cancelled) setGlobalSearchResults([]);
+      } finally {
+        if (!cancelled) setGlobalSearchLoading(false);
+      }
+    }, 180);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [globalSearch]);
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        globalSearchRef.current?.focus();
+        setGlobalSearchOpen(true);
+      }
+      if (event.key === 'Escape') setGlobalSearchOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   return (
     <div className={`app ${sidebarOpen ? 'sidebar-open' : ''}`}>
@@ -260,10 +390,13 @@ export default function Layout({ user, onLogout, children }) {
               <><b>/</b><strong>Workspace</strong></>
             )}
           </div>
-          <div className="search">
+          <div className="search global-search" ref={globalSearchContainerRef}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-            <input placeholder="Search documents, people, operations..." />
+            <input ref={globalSearchRef} placeholder="Search channels, documents, people..." value={globalSearch} onFocus={() => setGlobalSearchOpen(true)} onChange={(event) => { setGlobalSearch(event.target.value); setGlobalSearchOpen(true); }} aria-label="Search channels, documents, and people" aria-expanded={globalSearchOpen && globalSearch.trim().length >= 2} aria-controls="global-search-results" />
             <span className="kbd">⌘K</span>
+            {globalSearchOpen && globalSearch.trim().length >= 2 && <div className="global-search-results" id="global-search-results" role="listbox" aria-label="Search results">
+              {globalSearchLoading ? <p className="global-search-empty">Searching your workspace…</p> : globalSearchResults.length ? globalSearchResults.map((result, index) => <Link key={`${result.type}-${result.href}-${index}`} className="global-search-result" to={result.href} role="option" aria-selected="false" onClick={() => { setGlobalSearch(''); setGlobalSearchOpen(false); }}><span className="global-search-kind">{result.type}</span><span className="global-search-copy"><strong>{result.label}</strong><small>{result.detail}</small></span><span aria-hidden="true">↗</span></Link>) : <p className="global-search-empty">No matching channels, documents, or people.</p>}
+            </div>}
           </div>
           <div className="top-actions">
             <div className="notification-wrap" ref={notificationPanelRef}>
