@@ -62,6 +62,57 @@ function Toggle({ label, checked, onChange }) {
   );
 }
 
+function compareSuppliedText(sourceText, referenceText) {
+  const tokenize = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((word) => word.length > 1);
+  const sentences = (text) => String(text || '').replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/).map((item) => item.trim()).filter((item) => tokenize(item).length > 8);
+  const vectorize = (text) => {
+    const counts = new Map();
+    for (const token of tokenize(text)) counts.set(token, (counts.get(token) || 0) + 1);
+    const magnitude = Math.sqrt([...counts.values()].reduce((sum, count) => sum + count * count, 0));
+    return { counts, magnitude };
+  };
+  const cosine = (left, right) => {
+    if (!left.magnitude || !right.magnitude) return 0;
+    let dot = 0;
+    for (const [term, count] of left.counts) dot += count * (right.counts.get(term) || 0);
+    return dot / (left.magnitude * right.magnitude);
+  };
+
+  const sourceSentences = sentences(sourceText);
+  const referenceSentences = sentences(referenceText);
+  const matches = [];
+  const scores = sourceSentences.map((sentence) => {
+    const sourceVector = vectorize(sentence);
+    let best = null;
+    for (const referencePhrase of referenceSentences) {
+      const similarity = cosine(sourceVector, vectorize(referencePhrase));
+      if (!best || similarity > best.similarity) best = { referencePhrase, similarity };
+    }
+    const similarity = best?.similarity || 0;
+    if (best && similarity >= 0.25) {
+      const sourceTerms = new Set(tokenize(sentence));
+      matches.push({
+        source: 'Supplied reference text',
+        url: '',
+        match_pct: Math.round(similarity * 100),
+        phrase: sentence,
+        referencePhrase: best.referencePhrase,
+        overlappingPhrases: [...new Set(tokenize(best.referencePhrase))].filter((term) => sourceTerms.has(term))
+      });
+    }
+    return similarity;
+  });
+  const score = scores.length ? Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length * 100) : 0;
+  return {
+    score,
+    risk: score,
+    matches: matches.sort((a, b) => b.match_pct - a.match_pct).slice(0, 10),
+    scannedSentences: sourceSentences.length,
+    referenceSentences: referenceSentences.length,
+    provider: 'local-supplied-reference'
+  };
+}
+
 export default function AIPanel({ user }) {
   const { documentId } = useParams();
   const [activeTab, setActiveTab] = useState('copilot');
@@ -314,8 +365,12 @@ export default function AIPanel({ user }) {
       setNotice('Paste reference text to compare. Nothing has been scanned yet.');
       return;
     }
+    const editor = globalThis.document.querySelector('[aria-label="Document editor"]');
+    const source = selectedText.trim() || (editor?.innerText || documentText).trim();
+    setReport(compareSuppliedText(source, referenceText.trim()));
+    setActiveTab('plagiarism');
     setShowReferenceCompare(false);
-    runAction('plagiarism', '', { referenceText: referenceText.trim() });
+    setNotice('Compared locally with the reference passage you supplied.');
   }
 
   function showDemoScenario(name) {

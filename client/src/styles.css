@@ -1056,8 +1056,8 @@ body{font-size:13px}
 .rail-card#railTabsCard .rail-tabs{position:sticky;top:0;z-index:1;background:#0b1728}
 .ai-live-grammar-compare{align-items:stretch}
 .ai-live-grammar-compare>.bad,.ai-live-grammar-compare>.good{max-height:120px;overflow:auto}
-/* Keep the writing copilot expanded; let the right rail scroll as one column. */
-.rail{position:static;height:auto;max-height:none;overflow:visible;scrollbar-gutter:auto}
+/* Keep scrolling inside the right rail so wheel input does not move the document page. */
+.rail{position:sticky;top:86px;height:calc(100vh - 104px);max-height:calc(100vh - 104px);overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;align-self:start}
 .ai-panel-card{flex:0 0 auto;max-height:none}
 .ai-panel-body-new,.ai-originality-body{max-height:none;overflow:visible}
 @media (max-width:1080px){
