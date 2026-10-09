@@ -97,3 +97,45 @@ export function analyzePlagiarism(text) {
     provider: process.env.PLAGIARISM_PROVIDER || 'local'
   };
 }
+
+export function compareWithReference(text, referenceText) {
+  const source = String(text || '').trim();
+  const reference = String(referenceText || '').trim();
+  const sourceSentences = splitSentences(source);
+  const referenceSentences = splitSentences(reference);
+  const matches = [];
+  const scores = [];
+
+  for (const sentence of sourceSentences) {
+    const vector = vectorize(sentence);
+    let best = null;
+    for (const referenceSentence of referenceSentences) {
+      const similarity = cosine(vector, vectorize(referenceSentence));
+      if (!best || similarity > best.similarity) best = { sentence: referenceSentence, similarity };
+    }
+    const score = best?.similarity || 0;
+    scores.push(score);
+    if (best && score >= 0.25) {
+      const sourceTerms = new Set(tokenize(sentence));
+      const overlap = [...new Set(tokenize(best.sentence))].filter((term) => sourceTerms.has(term));
+      matches.push({
+        source: 'Supplied reference text',
+        url: '',
+        match_pct: Math.round(score * 100),
+        phrase: sentence,
+        referencePhrase: best.sentence,
+        overlappingPhrases: overlap
+      });
+    }
+  }
+
+  const score = scores.length ? Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length * 100) : 0;
+  return {
+    score,
+    risk: score,
+    matches: matches.sort((a, b) => b.match_pct - a.match_pct).slice(0, 10),
+    scannedSentences: sourceSentences.length,
+    referenceSentences: referenceSentences.length,
+    provider: 'local-supplied-reference'
+  };
+}
