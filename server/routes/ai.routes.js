@@ -4,7 +4,7 @@ import { query } from '../db.js';
 import { autocomplete, paraphrase, summarize, translate } from '../services/ai.service.js';
 import { checkLanguageToolHealth } from '../services/languagetool.service.js';
 import { checkGrammar } from '../services/grammar.service.js';
-import { analyzePlagiarism } from '../services/plagiarism.service.js';
+import { analyzePlagiarism, compareWithReference } from '../services/plagiarism.service.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -154,7 +154,9 @@ router.post('/plagiarism', async (req, res) => {
   const text = requiredText(req, res, 24000);
   if (!text) return;
   try {
-    const report = analyzePlagiarism(text);
+    const referenceText = String(req.body?.referenceText || '').trim();
+    if (referenceText.length > 24000) return res.status(413).json({ message: 'Reference text is too long. Maximum is 24000 characters.' });
+    const report = referenceText ? compareWithReference(text, referenceText) : analyzePlagiarism(text);
     if (req.body.documentId) {
       await query(
         `INSERT INTO plagiarism_reports (document_id, score, matches) VALUES ($1, $2, $3)`,
