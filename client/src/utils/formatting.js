@@ -130,15 +130,30 @@ export function setLineHeight(height) {
 export function setBlockStyle(property, value) {
   const selection = window.getSelection();
   if (!selection || !selection.rangeCount) return false;
-  let container = selection.anchorNode;
-  if (container && container.nodeType === 3) {
-    container = container.parentElement;
-  }
-  if (container) {
-    container.style[property] = value;
-    return true;
-  }
-  return false;
+  const range = selection.getRangeAt(0);
+  const root = range.commonAncestorContainer.nodeType === 1
+    ? range.commonAncestorContainer.closest?.('[contenteditable="true"]')
+    : range.commonAncestorContainer.parentElement?.closest('[contenteditable="true"]');
+  if (!root) return false;
+
+  const blockSelector = 'p,div,h1,h2,h3,h4,h5,h6,li,blockquote,pre,td,th';
+  const closestBlock = (node) => {
+    const element = node?.nodeType === 1 ? node : node?.parentElement;
+    return element?.closest(blockSelector);
+  };
+  const blocks = range.collapsed
+    ? [closestBlock(range.startContainer)].filter(Boolean)
+    : Array.from(root.querySelectorAll(blockSelector)).filter((block) => {
+      try { return range.intersectsNode(block); } catch { return false; }
+    });
+  const targets = blocks.length ? blocks : [closestBlock(range.startContainer)].filter(Boolean);
+  if (!targets.length) return false;
+
+  targets.forEach((block) => {
+    block.style[property] = value;
+    if (property === 'lineHeight') block.dataset.lineHeight = String(value);
+  });
+  return true;
 }
 
 /**

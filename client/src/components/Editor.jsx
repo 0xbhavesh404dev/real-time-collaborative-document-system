@@ -62,11 +62,21 @@ function operationsForChange(oldText, newText, state, clientId, nextId) {
   return operations;
 }
 
+function uniqueOnlineUsers(users = []) {
+  const byId = new Map();
+  users.forEach((user, index) => {
+    const key = user?.id ?? `guest-${user?.username || index}`;
+    if (!byId.has(key)) byId.set(key, user);
+  });
+  return Array.from(byId.values());
+}
+
 export default function Editor({ user, onDocumentUnavailable }) {
   const { documentId } = useParams();
   const socketRef = useRef(null);
   const editorSurfaceRef = useRef(null);
   const selectionRef = useRef(null);
+  const selectionOffsetsRef = useRef(null);
   const stateRef = useRef(createCrdtState());
   const textRef = useRef('');
   const clientId = useRef(localStorage.getItem('collab_client_id') || crypto.randomUUID());
@@ -123,6 +133,9 @@ export default function Editor({ user, onDocumentUnavailable }) {
   });
   const [imageUploadError, setImageUploadError] = useState('');
   const [selectedImage, setSelectedImage] = useState(null);
+  const draggedImageRef = useRef(null);
+  const [showTablePicker, setShowTablePicker] = useState(false);
+  const [tableDimensions, setTableDimensions] = useState({ rows: 3, columns: 3 });
   const [showShareModal, setShowShareModal] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [commandSearch, setCommandSearch] = useState('');
@@ -231,7 +244,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
         title: payload.title,
         role: payload.role
       }));
-      setOnlineUsers(payload.users || []);
+      setOnlineUsers(uniqueOnlineUsers(payload.users));
     });
 
     socket.on('crdt-operation', ({ operation }) => {
@@ -252,10 +265,11 @@ export default function Editor({ user, onDocumentUnavailable }) {
       window.dispatchEvent(new CustomEvent('version-saved'));
     });
 
-    socket.on('user-joined', ({ users }) => setOnlineUsers(users));
+    socket.on('user-joined', ({ users }) => setOnlineUsers(uniqueOnlineUsers(users)));
     socket.on('user-left', ({ users }) => {
-      setOnlineUsers(users);
-      const stillHere = new Set((users || []).map((item) => item.id));
+      const uniqueUsers = uniqueOnlineUsers(users);
+      setOnlineUsers(uniqueUsers);
+      const stillHere = new Set(uniqueUsers.map((item) => item.id));
       setRemoteCursors((current) => current.filter((cursor) => stillHere.has(cursor.userId)));
     });
     socket.on('user-typing', ({ username }) => setTypingUser(username));
@@ -480,6 +494,8 @@ export default function Editor({ user, onDocumentUnavailable }) {
     if (!document || !['admin', 'editor'].includes(document.role)) return;
     setError('');
     const editorSurface = event.currentTarget;
+    saveSelection();
+    syncFormatState();
     const newText = editorSurface.innerText;
     // Clear any old text selection on paste/typing and publish the current
     // content immediately so AI actions cannot read the previous debounce tick.
@@ -572,8 +588,8 @@ export default function Editor({ user, onDocumentUnavailable }) {
   }
 
   function sendCursor(event) {
+    saveSelection();
     const selection = window.getSelection();
-    if (selection?.rangeCount) selectionRef.current = selection.getRangeAt(0).cloneRange();
     const selected = selection?.toString()?.trim() || '';
     setSelectedText(selected);
     window.dispatchEvent(new CustomEvent('editor-selection', { detail: { text: selected } }));
@@ -587,18 +603,100 @@ export default function Editor({ user, onDocumentUnavailable }) {
 
   function saveSelection() {
     const selection = window.getSelection();
-    if (selection?.rangeCount && editorSurfaceRef.current?.contains(selection.anchorNode)) {
-      selectionRef.current = selection.getRangeAt(0).cloneRange();
+    const editorSurface = editorSurfaceRef.current;
+    if (selection?.rangeCount && editorSurface?.contains(selection.anchorNode)) {
+      const range = selection.getRangeAt(0).cloneRange();
+      const offsetAt = (node, offset) => {
+        const before = globalThis.document.createRange();
+        before.selectNodeContents(editorSurface);
+        before.setEnd(node, offset);
+        return before.toString().length;
+      };
+      selectionRef.current = range;
+      const pathTo = (node) => {
+        const path = [];
+        let current = node;
+        while (current && current !== editorSurface) {
+          const parent = current.parentNode;
+          if (!parent) return null;
+          path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
+          current = parent;
+        }
+        return current === editorSurface ? path : null;
+      };
+      selectionOffsetsRef.current = {
+        start: offsetAt(range.startContainer, range.startOffset),
+        end: offsetAt(range.endContainer, range.endOffset),
+        collapsed: range.collapsed,
+        startPath: pathTo(range.startContainer),
+        startNodeOffset: range.startOffset,
+        endPath: pathTo(range.endContainer),
+        endNodeOffset: range.endOffset
+      };
     }
   }
 
   function restoreSelection() {
     const editorSurface = editorSurfaceRef.current;
     const selection = window.getSelection();
-    if (!editorSurface || !selectionRef.current) return;
-    if (!editorSurface.contains(selectionRef.current.startContainer)) return;
+    if (!editorSurface || !selection) return false;
+
+    // Keep a live caret in its exact paragraph (including an empty one). Safari
+    // may detach that range when adjacent inline formats are changed, so fall
+    // back to text offsets only after the saved native range is no longer valid.
+    const offsets = selectionOffsetsRef.current;
+    let range = null;
+    const savedRange = selectionRef.current;
+    if (savedRange && editorSurface.contains(savedRange.startContainer)
+      && editorSurface.contains(savedRange.endContainer)) {
+      range = savedRange.cloneRange();
+    } else if (offsets) {
+      const resolvePath = (path, offset) => {
+        if (!Array.isArray(path)) return null;
+        let node = editorSurface;
+        for (const childIndex of path) {
+          node = node.childNodes[childIndex];
+          if (!node) return null;
+        }
+        const limit = node.nodeType === Node.TEXT_NODE ? node.textContent.length : node.childNodes.length;
+        return [node, Math.max(0, Math.min(offset, limit))];
+      };
+      const pathStart = offsets.collapsed && resolvePath(offsets.startPath, offsets.startNodeOffset);
+      const pathEnd = offsets.collapsed && resolvePath(offsets.endPath, offsets.endNodeOffset);
+      if (pathStart && pathEnd) {
+        range = globalThis.document.createRange();
+        range.setStart(pathStart[0], pathStart[1]);
+        range.setEnd(pathEnd[0], pathEnd[1]);
+      }
+    }
+    if (!range && offsets) {
+      const walker = globalThis.document.createTreeWalker(editorSurface, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      let textNode = walker.nextNode();
+      while (textNode) {
+        nodes.push(textNode);
+        textNode = walker.nextNode();
+      }
+      const resolve = (target) => {
+        let remaining = Math.max(0, target);
+        for (const node of nodes) {
+          if (remaining <= node.textContent.length) return [node, remaining];
+          remaining -= node.textContent.length;
+        }
+        const last = nodes[nodes.length - 1];
+        return last ? [last, last.textContent.length] : [editorSurface, 0];
+      };
+      const [startNode, startOffset] = resolve(offsets.start);
+      const [endNode, endOffset] = resolve(offsets.end);
+      range = globalThis.document.createRange();
+      range.setStart(startNode, startOffset);
+      range.setEnd(endNode, endOffset);
+    }
+    if (!range) return false;
     selection.removeAllRanges();
-    selection.addRange(selectionRef.current);
+    selection.addRange(range);
+    selectionRef.current = range.cloneRange();
+    return true;
   }
 
   function replaceExactText(original, replacement) {
@@ -787,8 +885,19 @@ export default function Editor({ user, onDocumentUnavailable }) {
           if (match) matchedFontFamily = match.value;
         }
 
-        const lh = styledElement.style.lineHeight || (computed.lineHeight !== 'normal' ? computed.lineHeight : null);
-        if (lh) currentLineHeight = lh;
+      }
+
+      const lineHeightBlock = selectionElement?.closest('p,div,h1,h2,h3,h4,h5,h6,li,blockquote,pre,td,th') || editorSurface;
+      const storedLineHeight = lineHeightBlock.dataset?.lineHeight || lineHeightBlock.style.lineHeight;
+      if (storedLineHeight) {
+        let ratio = Number.parseFloat(storedLineHeight);
+        if (String(storedLineHeight).endsWith('px')) {
+          const fontSize = Number.parseFloat(window.getComputedStyle(lineHeightBlock).fontSize) || 16;
+          ratio /= fontSize;
+        }
+        currentLineHeight = LINE_HEIGHTS.reduce((closest, item) =>
+          Math.abs(Number(item.value) - ratio) < Math.abs(Number(closest.value) - ratio) ? item : closest
+        , LINE_HEIGHTS[0]).value;
       }
 
       setFormatState((prev) => ({
@@ -817,12 +926,63 @@ export default function Editor({ user, onDocumentUnavailable }) {
 
   function applyFormat(command, value = null) {
     if (readOnly) return;
-    restoreSelection();
+    if (!restoreSelection()) editorSurfaceRef.current?.focus();
+    const inlineField = {
+      bold: 'bold',
+      italic: 'italic',
+      underline: 'underline',
+      strikeThrough: 'strike'
+    }[command];
+    const currentSelection = window.getSelection();
+    if (inlineField && currentSelection?.rangeCount && currentSelection.isCollapsed) {
+      const range = currentSelection.getRangeAt(0);
+      const container = range.startContainer.nodeType === Node.ELEMENT_NODE
+        ? range.startContainer
+        : range.startContainer.parentElement;
+      const block = container?.closest('p,div,h1,h2,h3,h4,h5,h6,li,blockquote,pre,td,th');
+      const emptyBlock = block && !block.textContent.trim() && !block.querySelector('img,table');
+      if (emptyBlock) {
+        const decoration = (block.style.textDecorationLine || block.style.textDecoration || '').toLowerCase();
+        const directValue = inlineField === 'bold' ? block.style.fontWeight
+          : inlineField === 'italic' ? block.style.fontStyle
+          : decoration;
+        const explicitlyOff = directValue === 'normal' || directValue === 'none'
+          || (inlineField === 'underline' && directValue && !directValue.includes('underline'))
+          || (inlineField === 'strike' && directValue && !directValue.includes('line-through'));
+        const explicitlyOn = inlineField === 'bold'
+          ? directValue === 'bold' || Number.parseInt(directValue, 10) >= 600
+          : inlineField === 'italic' ? directValue === 'italic'
+          : inlineField === 'underline' ? decoration.includes('underline')
+          : decoration.includes('line-through');
+        const currentlyEnabled = explicitlyOff ? false : explicitlyOn ? true : Boolean(formatState[inlineField]);
+        const enabled = !currentlyEnabled;
+
+        if (inlineField === 'bold') block.style.fontWeight = enabled ? 'bold' : 'normal';
+        else if (inlineField === 'italic') block.style.fontStyle = enabled ? 'italic' : 'normal';
+        else {
+          const token = inlineField === 'underline' ? 'underline' : 'line-through';
+          const tokens = decoration.split(/\s+/).filter((item) => item && item !== 'none' && item !== token);
+          if (enabled) tokens.push(token);
+          block.style.textDecorationLine = tokens.length ? tokens.join(' ') : 'none';
+        }
+
+        setFormatState((current) => ({ ...current, [inlineField]: enabled }));
+        editorSurfaceRef.current?.focus();
+        saveSelection();
+        commitEditorHtml();
+        return;
+      }
+    }
     const applied = execFormat(command, value);
     if (!applied && command === 'hiliteColor') {
       execFormat('backColor', value);
     }
     editorSurfaceRef.current?.focus();
+    const selection = window.getSelection();
+    const editorSurface = editorSurfaceRef.current;
+    if (selectionOffsetsRef.current && (!selection?.rangeCount || !editorSurface?.contains(selection.anchorNode))) {
+      restoreSelection();
+    }
     saveSelection();
     syncFormatState();
     const contentHtml = editorSurfaceRef.current?.innerHTML || '';
@@ -876,8 +1036,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
   function applyLineHeight(height) {
     if (readOnly) return;
     restoreSelection();
-    execFormat('lineHeight', height);
-    setBlockStyle('lineHeight', height);
+    if (!setBlockStyle('lineHeight', height)) return;
     editorSurfaceRef.current?.focus();
     saveSelection();
     syncFormatState();
@@ -885,6 +1044,16 @@ export default function Editor({ user, onDocumentUnavailable }) {
     pendingHtmlRef.current = contentHtml;
     setFormattedContent(contentHtml);
     socketRef.current?.emit('formatting-update', { documentId, contentHtml });
+  }
+
+  function insertTable() {
+    if (readOnly) return;
+    const rows = Math.max(1, Math.min(30, Number.parseInt(tableDimensions.rows, 10) || 1));
+    const columns = Math.max(1, Math.min(20, Number.parseInt(tableDimensions.columns, 10) || 1));
+    const cells = '<td><br></td>'.repeat(columns);
+    const tableHtml = `<table><tbody>${Array.from({ length: rows }, () => `<tr>${cells}</tr>`).join('')}</tbody></table><p><br></p>`;
+    insertInlineHtml(tableHtml);
+    setShowTablePicker(false);
   }
 
   function applyIndent(direction) {
@@ -934,6 +1103,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
       if (image) {
         image.alt = file.name;
         image.title = file.name;
+        image.draggable = true;
         image.style.maxWidth = '100%';
         image.style.height = 'auto';
         setSelectedImage({
@@ -960,21 +1130,79 @@ export default function Editor({ user, onDocumentUnavailable }) {
   }
 
   function handleCanvasClick(event) {
-    sendCursor(event);
     const image = event.target.closest?.('img');
     if (!image) {
       setSelectedImage(null);
+      const editorSurface = editorSurfaceRef.current;
+      if (!readOnly && editorSurface) {
+        let range = null;
+        if (globalThis.document.caretRangeFromPoint) {
+          range = globalThis.document.caretRangeFromPoint(event.clientX, event.clientY);
+        } else if (globalThis.document.caretPositionFromPoint) {
+          const point = globalThis.document.caretPositionFromPoint(event.clientX, event.clientY);
+          if (point) {
+            range = globalThis.document.createRange();
+            range.setStart(point.offsetNode, point.offset);
+            range.collapse(true);
+          }
+        }
+
+        const blocks = Array.from(editorSurface.querySelectorAll('p,div,h1,h2,h3,h4,h5,h6,li,blockquote,pre'));
+        const lastBlock = blocks[blocks.length - 1];
+        const clickedBelowText = event.target === editorSurface && (!lastBlock || event.clientY > lastBlock.getBoundingClientRect().bottom + 12);
+        if (clickedBelowText) {
+          const lastIsEmptyParagraph = lastBlock?.tagName === 'P' && !lastBlock.textContent.trim() && !lastBlock.querySelector('img,table');
+          const paragraph = lastIsEmptyParagraph ? lastBlock : globalThis.document.createElement('p');
+          if (!lastIsEmptyParagraph) {
+            paragraph.appendChild(globalThis.document.createElement('br'));
+            editorSurface.appendChild(paragraph);
+          }
+          range = globalThis.document.createRange();
+          range.setStart(paragraph, 0);
+          range.collapse(true);
+          commitEditorHtml();
+        }
+
+        if (range && editorSurface.contains(range.startContainer)) {
+          const selection = globalThis.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          editorSurface.focus();
+          saveSelection();
+          syncFormatState();
+        } else if (event.target === editorSurface) {
+          // Empty pages and blank space below the last paragraph still need an
+          // actual editable block so the click can place a usable caret.
+          const paragraph = globalThis.document.createElement('p');
+          paragraph.appendChild(globalThis.document.createElement('br'));
+          editorSurface.appendChild(paragraph);
+          const caret = globalThis.document.createRange();
+          caret.setStart(paragraph, 0);
+          caret.collapse(true);
+          const selection = globalThis.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(caret);
+          editorSurface.focus();
+          saveSelection();
+          commitEditorHtml();
+        }
+        sendCursor(event);
+      } else {
+        sendCursor(event);
+      }
       return;
     }
+    sendCursor(event);
+    image.draggable = true;
     const surfaceWidth = editorSurfaceRef.current?.clientWidth || image.naturalWidth || 120;
     setSelectedImage({
       node: image,
       alt: image.alt || '',
       width: Math.round(image.getBoundingClientRect().width || image.naturalWidth || 120),
       maxWidth: Math.max(120, surfaceWidth - 40),
-      align: image.style.marginLeft === 'auto' && image.style.marginRight === 'auto'
+      align: image.dataset.align || (image.style.marginLeft === 'auto' && image.style.marginRight === 'auto'
         ? 'center'
-        : image.style.marginLeft === 'auto' ? 'right' : 'left'
+        : image.style.marginLeft === 'auto' ? 'right' : 'left')
     });
   }
 
@@ -991,7 +1219,76 @@ export default function Editor({ user, onDocumentUnavailable }) {
     image.style.display = 'block';
     image.style.marginLeft = align === 'left' ? '0' : 'auto';
     image.style.marginRight = align === 'right' ? '0' : 'auto';
+    image.dataset.align = align;
     setSelectedImage((current) => ({ ...current, align }));
+    commitEditorHtml();
+  }
+
+  function handleImageDragStart(event) {
+    const image = event.target.closest?.('img');
+    if (!image || !editorSurfaceRef.current?.contains(image)) return;
+    image.draggable = true;
+    draggedImageRef.current = image;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', 'Move image');
+  }
+
+  function handleImageDragOver(event) {
+    if (!draggedImageRef.current) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }
+
+  function handleImageDrop(event) {
+    const image = draggedImageRef.current;
+    const editorSurface = editorSurfaceRef.current;
+    if (!image || !editorSurface) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    let range = null;
+    if (globalThis.document.caretRangeFromPoint) {
+      range = globalThis.document.caretRangeFromPoint(event.clientX, event.clientY);
+    } else if (globalThis.document.caretPositionFromPoint) {
+      const point = globalThis.document.caretPositionFromPoint(event.clientX, event.clientY);
+      if (point) {
+        range = globalThis.document.createRange();
+        range.setStart(point.offsetNode, point.offset);
+        range.collapse(true);
+      }
+    }
+    if (!range || !editorSurface.contains(range.startContainer) || image.contains(range.startContainer)) {
+      draggedImageRef.current = null;
+      return;
+    }
+
+    // A drop directly over another image can resolve to that IMG element rather
+    // than a text caret. Insert beside it instead of nesting one image in another.
+    if (range.startContainer.nodeType === Node.ELEMENT_NODE && range.startContainer.tagName === 'IMG') {
+      const targetImage = range.startContainer;
+      const insertAfter = range.startOffset > 0 || event.clientX > targetImage.getBoundingClientRect().left + targetImage.getBoundingClientRect().width / 2;
+      range.setStartBefore(targetImage);
+      if (insertAfter) range.setStartAfter(targetImage);
+      range.collapse(true);
+    }
+
+    try {
+      // Inserting an attached node moves it from its old position, so the
+      // source remains in place if the browser rejects the destination range.
+      range.insertNode(image);
+    } catch {
+      draggedImageRef.current = null;
+      return;
+    }
+    // Keep the moved image selected so its resize, alignment and alt controls stay available.
+    setSelectedImage((current) => current?.node === image ? current : {
+      node: image,
+      alt: image.alt || '',
+      width: Math.round(image.getBoundingClientRect().width || image.naturalWidth || 120),
+      maxWidth: Math.max(120, editorSurface.clientWidth - 40),
+      align: image.dataset.align || 'left'
+    });
+    draggedImageRef.current = null;
     commitEditorHtml();
   }
 
@@ -1221,7 +1518,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
         <div className="editor-head-actions">
           <div className="collab-stack" title="View collaborators">
             {onlineUsers.slice(0, 4).map((u, i) => (
-              <div key={u.id || i} className="avatar a-bh">
+              <div key={`${u.id ?? u.username ?? 'guest'}-${i}`} className="avatar a-bh">
                 {u.username ? u.username.substring(0, 2).toUpperCase() : 'BH'}
               </div>
             ))}
@@ -1352,7 +1649,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
           <div className="tgroup">
             <button type="button" className="tbtn" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => { const url = window.prompt('Enter URL', 'https://example.com'); if (url) { restoreSelection(); execFormat('createLink', url); saveSelection(); commitEditorHtml(); } }} data-tip="Insert link" aria-label="Insert link">↗</button>
             <button type="button" className="tbtn" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => { restoreSelection(); execFormat('unlink'); saveSelection(); commitEditorHtml(); }} data-tip="Remove link" aria-label="Remove link">⊘</button>
-            <button type="button" className="tbtn" onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => insertInlineHtml('<table><tbody><tr><td>Cell</td><td>Cell</td><td>Cell</td></tr><tr><td>Cell</td><td>Cell</td><td>Cell</td></tr><tr><td>Cell</td><td>Cell</td><td>Cell</td></tr></tbody></table><p></p>')} data-tip="Insert 3×3 table" aria-label="Insert table">▦</button>
+            <button type="button" className={`tbtn ${showTablePicker ? 'active' : ''}`} onMouseDown={(e) => { e.preventDefault(); saveSelection(); }} onClick={() => setShowTablePicker(true)} data-tip="Insert table" aria-label="Insert table" aria-expanded={showTablePicker}>▦</button>
           </div>
 
           <div className="tsep" />
@@ -1368,6 +1665,27 @@ export default function Editor({ user, onDocumentUnavailable }) {
         </div>
       )}
 
+      {showTablePicker && (
+        <div className="table-picker-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowTablePicker(false); }}>
+          <div className="table-picker" role="dialog" aria-modal="true" aria-label="Choose table size">
+            <div className="table-picker-heading"><strong>Insert a table</strong><button type="button" onClick={() => setShowTablePicker(false)} aria-label="Close table size picker">×</button></div>
+            <p>Choose how many rows and columns to add.</p>
+            <div className="table-picker-fields">
+              <label>Rows
+                <input type="number" min="1" max="30" value={tableDimensions.rows} onChange={(event) => setTableDimensions((current) => ({ ...current, rows: event.target.value }))} aria-label="Table rows" />
+              </label>
+              <label>Columns
+                <input type="number" min="1" max="20" value={tableDimensions.columns} onChange={(event) => setTableDimensions((current) => ({ ...current, columns: event.target.value }))} aria-label="Table columns" />
+              </label>
+            </div>
+            <small>Up to 30 rows and 20 columns</small>
+            <div className="table-picker-actions">
+              <button type="button" onClick={() => setShowTablePicker(false)}>Cancel</button>
+              <button type="button" className="table-insert-button" onMouseDown={(event) => event.preventDefault()} onClick={insertTable}>Insert table</button>
+            </div>
+          </div>
+        </div>
+      )}
 
 
       <div className="canvas-wrap">
@@ -1395,6 +1713,9 @@ export default function Editor({ user, onDocumentUnavailable }) {
             suppressContentEditableWarning
             onSelect={sendCursor}
             onClick={handleCanvasClick}
+            onDragStart={handleImageDragStart}
+            onDragOver={handleImageDragOver}
+            onDrop={handleImageDrop}
             onKeyUp={sendCursor}
             onInput={handleChange}
             role="textbox"
@@ -1458,7 +1779,7 @@ export default function Editor({ user, onDocumentUnavailable }) {
         <div className="bottom-left">
           <div className="collab-stack">
             {onlineUsers.slice(0, 4).map((u, i) => (
-              <div className="avatar a-bh" key={u.id || i} title={u.username}>
+              <div className="avatar a-bh" key={`${u.id ?? u.username ?? 'guest'}-${i}`} title={u.username}>
                 {u.username ? u.username.substring(0, 2).toUpperCase() : 'BH'}
               </div>
             ))}
