@@ -4,7 +4,7 @@ function cleanText(value, max = 12000) {
   return String(value || '').trim().slice(0, max);
 }
 
-async function callModel({ system, user, temperature = 0.4, maxTokens = 300, responseMimeType }) {
+async function callModel({ system, user, temperature = 0.4, maxTokens = 300, responseMimeType, allowModelFallback = true, timeoutMs = 12000 }) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === 'your-gemini-api-key') {
     return null;
@@ -24,6 +24,7 @@ async function callModel({ system, user, temperature = 0.4, maxTokens = 300, res
         'Content-Type': 'application/json',
         'x-goog-api-key': apiKey
       },
+      signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify({
         system_instruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [{ text: user }] }],
@@ -33,7 +34,7 @@ async function callModel({ system, user, temperature = 0.4, maxTokens = 300, res
 
     if (!response.ok) {
       const message = await response.text().catch(() => 'AI provider request failed');
-      if (response.status === 503 && index < models.length - 1) continue;
+      if (allowModelFallback && response.status === 503 && index < models.length - 1) continue;
       throw new Error(`AI provider error: ${response.status} ${message.slice(0, 300)}`);
     }
 
@@ -44,41 +45,6 @@ async function callModel({ system, user, temperature = 0.4, maxTokens = 300, res
       .trim() || '';
   }
   return null;
-}
-
-function fallbackGrammar(text) {
-  const source = cleanText(text, 5000);
-  const fixes = [];
-  // A comma before the first "and" is inconsistent in a three-name sequence
-  // that already joins the final names with "and". Keep the list comma-free.
-  const threeNameList = source.match(/\b([A-Za-z][A-Za-z'-]*),\s+and\s+([A-Za-z][A-Za-z'-]*)\s+and\s+([A-Za-z][A-Za-z'-]*)\b/);
-  if (threeNameList) {
-    fixes.push({
-      original: threeNameList[0],
-      suggestion: `${threeNameList[1]} and ${threeNameList[2]} and ${threeNameList[3]}`,
-      reason: 'Remove the comma so this three-name list follows the comma-free style.',
-      severity: 'low'
-    });
-  }
-  const patterns = [
-    { re: /\b(i)\b/, suggestion: 'I', reason: 'The first-person pronoun should be capitalized.', severity: 'low' },
-    { re: /\b(he|she|it)\s+(go|do|have|need|want|make)\b/i, map: (m) => `${m[1]} ${({go:'goes',do:'does',have:'has',need:'needs',want:'wants',make:'makes'})[m[2].toLowerCase()]}`, reason: 'The verb should agree with the singular subject.', severity: 'medium' },
-    { re: /\b(they|we|you)\s+(is|was)\b/i, map: (m) => `${m[1]} ${m[2].toLowerCase() === 'is' ? 'are' : 'were'}`, reason: 'Use the plural form of the verb with this subject.', severity: 'medium' },
-    { re: /\b(a)\s+([aeiou][a-z]*)\b/i, map: (m) => `an ${m[2]}`, reason: 'Use “an” before a vowel sound.', severity: 'low' },
-    { re: /\b(am|is|are)\s+(agree|discuss|consider|understand)\b/i, map: (m) => `${m[1]} ${m[2] === 'agree' ? 'in agreement' : m[2]}`, reason: 'This verb form is usually expressed more naturally without the unnecessary construction.', severity: 'medium' },
-    { re: /\b(very very|really really|is is|the the)\b/i, map: (m) => m[1].split(' ')[0], reason: 'Remove the repeated word.', severity: 'low' }
-  ];
-  for (const pattern of patterns) {
-    const match = source.match(pattern.re);
-    if (!match) continue;
-    const replacement = pattern.map ? pattern.map(match) : pattern.suggestion;
-    const original = match[0];
-    if (replacement && replacement !== original) {
-      fixes.push({ original, suggestion: replacement, reason: pattern.reason, severity: pattern.severity });
-    }
-    if (fixes.length >= 3) break;
-  }
-  return fixes;
 }
 
 function fallbackSummary(text) {
@@ -96,6 +62,9 @@ export async function autocomplete(context) {
   const output = await callModel({ system, user: input, temperature: 0.35, maxTokens: 40 });
   return output || '';
 }
+
+const REWRITE_STOP_WORDS = new Set('a an and are as at be been being by for from had has have he her hers him his i in is it its me my of on or our ours she that the their theirs them they this to was we were what when where which who will with you your yours am do did does not but if into over under'.split(' '));
+const SENTENCE_START_WORDS = new Set('a an and but he i in it my she the they this we when while you'.split(' '));
 
 export async function paraphrase(text, tone = 'academic', context = {}) {
   const input = cleanText(text, 2500);
@@ -141,39 +110,37 @@ export async function paraphrase(text, tone = 'academic', context = {}) {
   throw new Error('The AI rewrite did not preserve the full passage');
 }
 
-const REWRITE_STOP_WORDS = new Set('a an and are as at be been being by for from had has have he her hers him his i in is it its me my of on or our ours she that the their theirs them they this to was we were what when where which who will with you your yours am do did does not but if into over under'.split(' '));
-const SENTENCE_START_WORDS = new Set('a an and but he i in it my she the they this we when while you'.split(' '));
-
-export async function grammar(text) {
+export async function grammarFallback(text) {
   const input = cleanText(text, 5000);
-  const system = "You are a careful real-time writing assistant. Identify only genuine grammar, spelling, punctuation, or clarity issues in the supplied text. Return a JSON array of objects with exact fields { original, suggestion, reason, severity }. 'original' MUST be an exact substring from the input so the UI can replace it safely. 'suggestion' must be the corrected wording only. severity must be 'low'|'medium'|'high'. Return [] when there is no clear issue. Do not rewrite correct sentences or introduce optional commas.";
-  let output = null;
-  try {
-    output = await callModel({ system, user: input, temperature: 0.2, maxTokens: 500, responseMimeType: 'application/json' });
-  } catch {
-    // Keep precise local corrections available when the model provider is unavailable.
-  }
-  if (output) {
-    try {
-      const normalized = output.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-      const parsed = JSON.parse(normalized);
-      if (Array.isArray(parsed)) {
-        const modelSuggestions = parsed.filter((item) => {
-          const original = String(item?.original || '').trim();
-          const suggestion = String(item?.suggestion || '').trim();
-          return original && suggestion && original !== suggestion && input.includes(original);
-        });
-        const styleFix = fallbackGrammar(input).find((item) => item.reason.startsWith('Remove the comma'));
-        const remaining = styleFix
-          ? modelSuggestions.filter((item) => !item.original.includes(styleFix.original) && !styleFix.original.includes(item.original))
-          : modelSuggestions;
-        return [...(styleFix ? [styleFix] : []), ...remaining].slice(0, 12);
-      }
-    } catch {
-      // The fallback keeps the endpoint useful when a model returns non-JSON text.
-    }
-  }
-  return fallbackGrammar(input);
+  const system = "You are a grammar checker. Find only clear spelling, grammar, punctuation, or capitalization errors. Do not rewrite correct text or add optional commas. Return a JSON array with objects { original, suggestion, reason, severity }. Every original must be an exact substring of the input; suggestion is only its corrected replacement. Return [] if no clear errors. Do not add explanations outside the JSON.";
+  const output = await callModel({
+    system,
+    user: input,
+    temperature: 0.2,
+    maxTokens: 500,
+    responseMimeType: 'application/json',
+    allowModelFallback: false
+  });
+  if (!output) throw new Error('Gemini grammar fallback is unavailable or not configured');
+
+  const normalized = output.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  const parsed = JSON.parse(normalized);
+  if (!Array.isArray(parsed)) throw new Error('Gemini grammar fallback returned an invalid response');
+  return parsed.flatMap((item) => {
+    const original = String(item?.original || '').trim();
+    const suggestion = String(item?.suggestion || '').trim();
+    const sourceOffset = input.indexOf(original);
+    if (!original || !suggestion || original === suggestion || sourceOffset < 0) return [];
+    if (input.indexOf(original, sourceOffset + original.length) >= 0) return [];
+    return [{
+      original,
+      suggestion,
+      reason: String(item?.reason || 'Gemini found a possible grammar improvement.'),
+      severity: ['low', 'medium', 'high'].includes(item?.severity) ? item.severity : 'low',
+      sourceOffset,
+      source: 'gemini'
+    }];
+  }).slice(0, 12);
 }
 
 export async function summarize(text) {

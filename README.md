@@ -62,6 +62,17 @@ npm run dev
 
 Open `http://localhost:5173`.
 
+### Grammar checking (local LanguageTool)
+
+Live grammar suggestions and the **Grammar scan** check LanguageTool first. They do not send normal LanguageTool findings to Gemini. The app expects a LanguageTool HTTP server at `http://localhost:8081` by default. On macOS, install and start it with Homebrew:
+
+```bash
+brew install languagetool
+brew services start languagetool
+```
+
+Set `LANGUAGETOOL_URL` and `LANGUAGETOOL_LANGUAGE` in the server `.env` file if your server uses a different address or language. Keep the service local or use a properly secured private/Enterprise instance; the free public LanguageTool endpoint does not allow automated requests. If LanguageTool is unavailable, the backend makes one Gemini grammar fallback attempt without retrying across multiple Gemini models. Repeated identical checks are cached, and stale browser requests are cancelled. Gemini also powers explicit AI writing tools such as Improve writing, Paraphrase, Summarize, and Translate. Automatic autocomplete is off by default to avoid background Gemini requests while typing; the existing toggle can enable it. The health endpoint is `GET /api/ai/grammar/health` and requires a signed-in session.
+
 If the API reports that the port is already in use, keep the existing backend process and open the frontend in the browser. The backend health check is available at `http://localhost:5000/api/health`.
 
 ## Architecture and database

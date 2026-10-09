@@ -1,7 +1,9 @@
 import express from 'express';
 import { requireAuth } from '../auth.js';
 import { query } from '../db.js';
-import { autocomplete, grammar, paraphrase, summarize, translate } from '../services/ai.service.js';
+import { autocomplete, paraphrase, summarize, translate } from '../services/ai.service.js';
+import { checkLanguageToolHealth } from '../services/languagetool.service.js';
+import { checkGrammar } from '../services/grammar.service.js';
 import { analyzePlagiarism } from '../services/plagiarism.service.js';
 
 const router = express.Router();
@@ -9,8 +11,8 @@ router.use(requireAuth);
 
 const rateBuckets = new Map();
 const WINDOW_MS = 60_000;
-// Keep an abuse guard without cutting off ordinary editing sessions: live
-// grammar checks and manual AI tools share this per-account request budget.
+// This budget applies to Gemini-backed writing actions. Local LanguageTool
+// checks do not consume the Gemini request budget.
 const MAX_REQUESTS = Math.max(1, Number.parseInt(process.env.AI_REQUESTS_PER_MINUTE || '60', 10) || 60);
 
 function rateLimit(req, res, next) {
@@ -26,8 +28,6 @@ function rateLimit(req, res, next) {
   rateBuckets.set(userKey, recent);
   return next();
 }
-
-router.use(rateLimit);
 
 function requiredText(req, res, max = 12000) {
   const text = String(req.body?.text || '').trim();
@@ -55,7 +55,7 @@ async function audit(documentId, userId, kind, inputText, outputText, accepted =
   }
 }
 
-router.post('/autocomplete', async (req, res) => {
+router.post('/autocomplete', rateLimit, async (req, res) => {
   const text = requiredText(req, res, 500);
   if (!text) return;
   try {
@@ -68,7 +68,7 @@ router.post('/autocomplete', async (req, res) => {
   }
 });
 
-router.post('/paraphrase', async (req, res) => {
+router.post('/paraphrase', rateLimit, async (req, res) => {
   const text = requiredText(req, res, 2500);
   if (!text) return;
   try {
@@ -93,20 +93,28 @@ router.post('/paraphrase', async (req, res) => {
   }
 });
 
+router.get('/grammar/health', async (_req, res) => {
+  const available = await checkLanguageToolHealth();
+  return res.json({ provider: 'LanguageTool', available });
+});
+
 router.post('/grammar', async (req, res) => {
   const text = requiredText(req, res, 5000);
   if (!text) return;
   try {
-    const suggestions = await grammar(text);
-    await audit(req.body.documentId, req.user.id, 'grammar', text, JSON.stringify(suggestions));
-    return res.json({ suggestions });
+    const result = await checkGrammar(text, { userId: req.user.id });
+    if (req.body?.manual) await audit(req.body.documentId, req.user.id, 'grammar', text, JSON.stringify(result.suggestions));
+    if (result.fallback) console.info('Grammar provider: Gemini fallback; LanguageTool unavailable.');
+    return res.json(result);
   } catch (error) {
     console.error('Grammar check failed:', error);
-    return res.json({ suggestions: [], fallback: true });
+    return res.status(503).json({
+      message: 'Grammar checking is temporarily unavailable. Check the LanguageTool service or Gemini configuration.'
+    });
   }
 });
 
-router.post('/summarize', async (req, res) => {
+router.post('/summarize', rateLimit, async (req, res) => {
   const text = requiredText(req, res, 24000);
   if (!text) return;
   try {
@@ -119,7 +127,7 @@ router.post('/summarize', async (req, res) => {
   }
 });
 
-router.post('/translate', async (req, res) => {
+router.post('/translate', rateLimit, async (req, res) => {
   const text = requiredText(req, res, 5000);
   if (!text) return;
   try {
