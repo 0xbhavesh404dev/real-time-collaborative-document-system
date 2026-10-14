@@ -55,15 +55,14 @@ jobs:
         run: |
           docker pull ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-server:${{ github.sha }}
           docker pull ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-client:${{ github.sha }}
-          docker save -o collab-docs-server.tar ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-server:${{ github.sha }}
-          docker save -o collab-docs-client.tar ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-client:${{ github.sha }}
+          docker save -o collab-docs-fullstack.tar \
+            ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-server:${{ github.sha }} \
+            ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-client:${{ github.sha }}
 
       - name: Upload Docker image archives
         uses: actions/upload-artifact@v4
         with:
           name: collab-docs-docker-images
-          path: |
-            collab-docs-server.tar
-            collab-docs-client.tar
+          path: collab-docs-fullstack.tar
           if-no-files-found: error
           retention-days: 30
