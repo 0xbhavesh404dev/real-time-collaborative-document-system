@@ -50,3 +50,20 @@ jobs:
           tags: |
             ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-client:latest
             ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-client:${{ github.sha }}
+
+      - name: Export Docker images as tar archives
+        run: |
+          docker pull ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-server:${{ github.sha }}
+          docker pull ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-client:${{ github.sha }}
+          docker save -o collab-docs-server.tar ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-server:${{ github.sha }}
+          docker save -o collab-docs-client.tar ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-client:${{ github.sha }}
+
+      - name: Upload Docker image archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: collab-docs-docker-images
+          path: |
+            collab-docs-server.tar
+            collab-docs-client.tar
+          if-no-files-found: error
+          retention-days: 30
