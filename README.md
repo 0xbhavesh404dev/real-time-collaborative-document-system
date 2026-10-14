@@ -62,6 +62,18 @@ npm run dev
 
 Open `http://localhost:5173`.
 
+### Docker deployment
+
+The project includes a Docker Compose stack for the React site, API, and PostgreSQL database. To build and run it on your Mac, install Docker Desktop (or another Docker Engine with the Compose plugin), then set `JWT_SECRET` in the root `.env` file to a long random value and run:
+
+```bash
+docker compose up --build
+```
+
+Open `http://localhost:8080`. PostgreSQL data is kept in the `postgres_data` volume. The schema is loaded automatically when the database volume is first created. To reset the database and erase its data, run `docker compose down -v`.
+
+You do not need Docker installed locally just to build images. The GitHub Actions workflow at `.github/workflows/docker-publish.yml` builds the frontend and backend images on GitHub and publishes them to GitHub Container Registry (GHCR) on pushes to `main`, `bhavesh-feature`, or `codex/docker-images`, version tags, or a manual run. Enable Actions for the repository; the workflow uses the built-in `GITHUB_TOKEN` and does not need a Docker Hub account. Images are published as `<owner>/<repository>-client` and `<owner>/<repository>-server` under `ghcr.io`. Set `GEMINI_API_KEY` as an environment variable when running the backend if you want live AI features.
+
 ### Grammar checking (local LanguageTool)
 
 Live grammar suggestions and the **Grammar scan** check LanguageTool first. They do not send normal LanguageTool findings to Gemini. The app expects a LanguageTool HTTP server at `http://localhost:8081` by default. On macOS, install and start it with Homebrew:
