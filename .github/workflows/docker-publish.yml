@@ -1,0 +1,68 @@
+name: Build and publish Docker images
+
+on:
+  push:
+    branches: [main, bhavesh-feature, codex/docker-images]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare image names
+        id: image
+        run: |
+          echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          echo "repo=$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Publish backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          push: true
+          tags: |
+            ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-server:latest
+            ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-server:${{ github.sha }}
+
+      - name: Publish frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./client
+          push: true
+          tags: |
+            ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-client:latest
+            ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-client:${{ github.sha }}
+
+      - name: Export Docker images as tar archives
+        run: |
+          docker pull ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-server:${{ github.sha }}
+          docker pull ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-client:${{ github.sha }}
+          docker save -o collab-docs-fullstack.tar \
+            ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-server:${{ github.sha }} \
+            ghcr.io/${{ steps.image.outputs.owner }}/${{ steps.image.outputs.repo }}-client:${{ github.sha }}
+
+      - name: Upload Docker image archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: collab-docs-docker-images
+          path: collab-docs-fullstack.tar
+          if-no-files-found: error
+          retention-days: 30

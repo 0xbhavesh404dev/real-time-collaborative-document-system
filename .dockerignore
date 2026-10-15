@@ -1,0 +1,11 @@
+.git
+.env
+node_modules
+client/node_modules
+server/node_modules
+client/dist
+.build-report
+.build-pptx
+deliverables
+Collab_Docs_Screenshots
+video-production
