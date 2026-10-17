@@ -1,50 +1,102 @@
-cd "/Users/bhaveshkumar/Downloads/real-time-collaborative-2 with ai integrated/server"
-npm install
-npm start
+<div align="center">
 
+# 📝 Collab Docs — Real-Time Collaborative Document System
 
+**A DBMS capstone project: real-time collaborative editing with a custom educational CRDT, role-based access, version history, and an AI writing copilot.**
 
-cd "/Users/bhaveshkumar/Downloads/real-time-collaborative-2 with ai integrated/client"
-npm install
-npm run dev
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-Express-339933?logo=node.js&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-DB-4169E1?logo=postgresql&logoColor=white)
+![Socket.IO](https://img.shields.io/badge/Socket.IO-realtime-white?logo=socketdotio&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
+</div>
 
-# Real-Time Collaborative Document Management System
+---
 
-A beginner-to-medium DBMS project showing real-time collaborative editing with a custom educational CRDT.
+## 🎬 Product walkthrough (4 min)
 
-## Problem and objectives
+Watch the full feature walkthrough — every major feature, recorded from the live app:
 
-Whole-document replacement can overwrite another user's edit. This project represents edits as operations, merges them deterministically, persists the state in PostgreSQL, and sends operations through Socket.IO. It also demonstrates authentication, channels, roles, presence, and manual version snapshots.
+https://github.com/0xbhavesh404dev/real-time-collaborative-document-system/releases/download/demo-v1/Collab_Docs_Feature_Walkthrough.mp4
 
-## Features
+> 📥 Prefer downloading? The video is also in the repo at [`demo/Collab_Docs_Feature_Walkthrough.mp4`](demo/Collab_Docs_Feature_Walkthrough.mp4).
 
-- User registration and login with bcryptjs and JWT.
-- PostgreSQL users, channels, membership, documents, CRDT operations, versions, and invitations.
-- Admin, editor, and viewer permissions checked by the backend and Socket.IO.
-- Character-based custom CRDT with unique ids, tombstones, pending operations, deterministic ordering, and idempotency.
-- Socket.IO document rooms with initial sync, operation replication, presence, basic cursor/typing events.
-- Save, preview, and restore document versions. Restore creates a new version and keeps old versions.
-- Custom contentEditable rich-text editor with a full formatting toolbar, live grammar suggestions, autocomplete, bundled-reference similarity checks, paraphrase/rewrite actions, and a right-side AI workspace.
+---
 
-## Technology stack
+## 🖼️ The editor at a glance
 
-React, Vite, JavaScript, JSX, React Router, Fetch API, Socket.IO client, Node.js, Express, Socket.IO, JWT, bcryptjs, PostgreSQL, and `pg`. No ready-made CRDT library is used.
+![Editor overview](Collab_Docs_Screenshots/01-editor-overview.png)
 
-## Setup
+---
 
-For feature work, use the `bhavesh-feature` branch so changes stay separate from `main`.
+## ❓ The problem it solves
 
-1. Install Node.js, PostgreSQL, and npm.
-2. Create the database:
+If two people edit a shared document by replacing the whole text, one person's save silently **overwrites** the other's work. Collab Docs represents every edit as an **operation**, merges them with a **CRDT** (so the result is the same on every screen, no matter the arrival order), persists state in **PostgreSQL**, and replicates operations in real time over **Socket.IO** — while keeping authentication, channels, roles, presence, and manual version snapshots.
+
+## ✨ Features
+
+### 🔄 Real-time collaboration
+- **Character-based custom CRDT** with unique ids, tombstones, pending operations, deterministic ordering, and idempotency — no ready-made CRDT library
+- **Socket.IO document rooms** with initial sync, operation replication, presence, and cursor/typing events
+- **Live grammar assistance** while typing (LanguageTool)
+
+### 🗂️ Documents & version history
+- Channels with membership and invitations
+- **Save, preview, and restore versions** — a restore becomes a *new* version and old versions are kept
+- Full formatting toolbar: text styles, fonts, colors, superscript/subscript, lists, tables, images, quotes, code blocks, and more
+
+### 🤖 AI writing copilot
+- **Grammar suggestions** with one-click **Accept / Reject**
+- **Improve writing**, **Paraphrase** (3 alternatives), **Summarize**, **Translate**
+- **Autocomplete** ghost text (off by default; opt-in)
+- **Reference similarity check** — compares against a bundled corpus or your own pasted text (local TF-IDF/cosine, not a web-wide plagiarism scan)
+- **Demo Mode** — clearly labeled sample results that never touch the real document
+- Per-user rate limiting, and AI outputs audited in PostgreSQL
+
+### 🔐 Roles & security
+- JWT + bcryptjs authentication
+- **Admin / Editor / Viewer** roles enforced on both REST and Socket.IO
+- Viewers can read but cannot edit, save, restore, or manage members
+
+## 🖼️ Feature gallery
+
+| | |
+|---|---|
+| ![Grammar scan](Collab_Docs_Screenshots/02-grammar-scan.png) | ![Autocomplete](Collab_Docs_Screenshots/03-autocomplete.png) |
+| *Grammar scan — issues with explanations and fixes* | *Autocomplete — ghost text before acceptance* |
+| ![Improve writing](Collab_Docs_Screenshots/04-improve-writing.png) | ![Paraphrase](Collab_Docs_Screenshots/05-paraphrase.png) |
+| *Improve writing — original vs improved, with regenerate* | *Paraphrase — up to three alternatives* |
+| ![Summarize](Collab_Docs_Screenshots/06-summarize.png) | ![Reference similarity](Collab_Docs_Screenshots/07-reference-similarity.png) |
+| *Summarize — 2–3 sentence brief with insert/copy* | *Reference similarity — matching passages & shared terms* |
+| ![Demo mode](Collab_Docs_Screenshots/08-demo-mode.png) | ![Accept / reject](Collab_Docs_Screenshots/09-accept-reject.png) |
+| *Demo Mode — simulated results, never real edits* | *Accept / Reject a grammar suggestion* |
+| ![Writing context](Collab_Docs_Screenshots/10-writing-context.png) | |
+| *Writing context — tone, audience, and goal controls* | |
+
+## 🛠️ Technology stack
+
+| Layer | Tools |
+|---|---|
+| **Frontend** | React 19, Vite, JavaScript/JSX, React Router, Fetch API, Socket.IO client |
+| **Backend** | Node.js, Express, Socket.IO, JWT, bcryptjs |
+| **Database** | PostgreSQL + `pg` (users, channels, memberships, documents, CRDT operations, versions, invitations) |
+| **AI** | Gemini API (writing tools) + local LanguageTool (grammar) |
+| **DevOps** | Docker Compose, GitHub Actions → GHCR images |
+
+## 🚀 Quick start
+
+1. Install **Node.js**, **PostgreSQL**, and **npm**
+2. Create and seed the database:
 
 ```bash
 createdb collab_docs
 psql -d collab_docs -f database/schema.sql
 ```
 
-3. Copy `.env.example` to `.env` and set `DATABASE_URL`, `JWT_SECRET`, and `CLIENT_URL`. On a passwordless local macOS PostgreSQL installation, `DATABASE_URL=postgresql:///collab_docs` may be useful.
-4. Install and run the server:
+3. Copy `.env.example` to `.env` and set `DATABASE_URL`, `JWT_SECRET`, and `CLIENT_URL`
+   (on a passwordless local macOS PostgreSQL, `DATABASE_URL=postgresql:///collab_docs` works)
+4. Start the backend:
 
 ```bash
 cd server
@@ -52,7 +104,7 @@ npm install
 npm start
 ```
 
-5. In another terminal, install and run the client:
+5. In another terminal, start the frontend:
 
 ```bash
 cd client
@@ -60,108 +112,105 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+6. Open **http://localhost:5173**
 
-### Docker deployment
+> Backend health check: `http://localhost:5000/api/health`. If the port is already in use, keep the existing backend and just open the frontend.
 
-The project includes a Docker Compose stack for the React site, API, and PostgreSQL database. To build and run it on your Mac, install Docker Desktop (or another Docker Engine with the Compose plugin), then set `JWT_SECRET` in the root `.env` file to a long random value and run:
+## 🐳 Docker deployment
+
+A Docker Compose stack runs the React site, API, and PostgreSQL with the schema loaded automatically:
 
 ```bash
+# set JWT_SECRET in the root .env first (long random value)
 docker compose up --build
+# open http://localhost:8080
 ```
 
-Open `http://localhost:8080`. PostgreSQL data is kept in the `postgres_data` volume. The schema is loaded automatically when the database volume is first created. To reset the database and erase its data, run `docker compose down -v`.
+Data lives in the `postgres_data` volume; `docker compose down -v` resets the database.
 
-You do not need Docker installed locally just to build images. The GitHub Actions workflow at `.github/workflows/docker-publish.yml` builds the frontend and backend images on GitHub and publishes them to GitHub Container Registry (GHCR) on pushes to `main`, `bhavesh-feature`, or `codex/docker-images`, version tags, or a manual run. Enable Actions for the repository; the workflow uses the built-in `GITHUB_TOKEN` and does not need a Docker Hub account. Images are published as `<owner>/<repository>-client` and `<owner>/<repository>-server` under `ghcr.io`. Set `GEMINI_API_KEY` as an environment variable when running the backend if you want live AI features.
+GitHub Actions (`.github/workflows/docker-publish.yml`) builds and publishes images to **GHCR** on pushes to `main`, `bhavesh-feature`, or `codex/docker-images`, version tags, and manual runs — using the built-in `GITHUB_TOKEN`, no Docker Hub account needed. Images: `<owner>/<repo>-client` and `<owner>/<repo>-server`.
 
-### Grammar checking (local LanguageTool)
+## 🧠 AI & grammar setup
 
-Live grammar suggestions and the **Grammar scan** check LanguageTool first. They do not send normal LanguageTool findings to Gemini. The app expects a LanguageTool HTTP server at `http://localhost:8081` by default. On macOS, install and start it with Homebrew:
+### Gemini (writing tools)
+
+Set `GEMINI_API_KEY` (and optionally `AI_MODEL`) in the server `.env`. Backend routes:
+
+| Route | Purpose |
+|---|---|
+| `POST /api/ai/autocomplete` | Debounced inline continuation (last 500 chars) |
+| `POST /api/ai/paraphrase` | Three rewrite alternatives (academic / casual / concise) |
+| `POST /api/ai/grammar` | Grammar, spelling, and clarity suggestions |
+| `POST /api/ai/summarize` | Concise 2–3 sentence summary |
+| `POST /api/ai/plagiarism` | Local similarity scan vs bundled corpus or supplied text |
+| `GET /api/ai/status` | Reports LanguageTool/Gemini availability — never credentials |
+
+Rate limiting: `AI_REQUESTS_PER_MINUTE` (default 60/user). Outputs are audited in `ai_suggestions`; similarity reports in `plagiarism_reports`. Without Gemini, the UI clearly reports the limitation and summaries fall back to a labeled extractive preview.
+
+### LanguageTool (grammar)
 
 ```bash
 brew install languagetool
 brew services start languagetool
 ```
 
-Set `LANGUAGETOOL_URL` and `LANGUAGETOOL_LANGUAGE` in the server `.env` file if your server uses a different address or language. Keep the service local or use a properly secured private/Enterprise instance; the free public LanguageTool endpoint does not allow automated requests. If LanguageTool is unavailable, the backend makes one Gemini grammar fallback attempt without retrying across multiple Gemini models. Repeated identical checks are cached, and stale browser requests are cancelled. Gemini also powers explicit AI writing tools such as Improve writing, Paraphrase, Summarize, and Translate. Automatic autocomplete is off by default to avoid background Gemini requests while typing; the existing toggle can enable it. The health endpoint is `GET /api/ai/grammar/health` and requires a signed-in session.
+Set `LANGUAGETOOL_URL` and `LANGUAGETOOL_LANGUAGE` in the server `.env` if needed. Keep the service **local or private** — the free public endpoint doesn't allow automated requests. If LanguageTool is down, the backend makes a single Gemini grammar fallback attempt; repeated checks are cached and stale requests cancelled. Health: `GET /api/ai/grammar/health` (requires sign-in).
 
-If the API reports that the port is already in use, keep the existing backend process and open the frontend in the browser. The backend health check is available at `http://localhost:5000/api/health`.
+## 🏗️ Architecture
 
-## Architecture and database
+React talks to Express over **REST** (accounts, stored resources) while **Socket.IO** carries live operations and awareness events. The server keeps a `TextCRDT` instance per active document and persists JSONB state plus operation history.
 
-React communicates with Express over REST for accounts and stored resources. Socket.IO carries live operations and awareness events. The server uses a `TextCRDT` instance per active document and persists JSONB state plus operation history. See [docs/architecture.md](docs/architecture.md), [docs/database-design.md](docs/database-design.md), and [docs/api.md](docs/api.md).
+📄 Deep dives: [docs/architecture.md](docs/architecture.md) · [docs/database-design.md](docs/database-design.md) · [docs/api.md](docs/api.md) · [docs/crdt-explanation.md](docs/crdt-explanation.md)
 
-## CRDT algorithm
+### The CRDT in one paragraph
 
-Each character node has `id`, `value`, `leftId`, and `deleted`. Inserts reference the node on their left. Deletes create tombstones. Concurrent siblings are sorted by operation id, so delivery order does not decide the final text. Missing dependencies wait in `pendingOperations`, and duplicate ids are ignored. See [docs/crdt-explanation.md](docs/crdt-explanation.md).
+Each character node has `id`, `value`, `leftId`, and `deleted`. Inserts reference their left neighbor, deletes create **tombstones**, and concurrent siblings are sorted by operation id — so delivery order never decides the final text. Operations with missing dependencies wait in `pendingOperations`, and duplicate ids are ignored.
 
-## Testing
-
-Run the CRDT tests:
+## 🧪 Testing
 
 ```bash
 cd server
-npm run test:crdt
+npm run test:crdt     # CRDT convergence tests
 ```
-
-Build the frontend:
 
 ```bash
 cd client
-npm run build
+npm run build         # frontend production build
 ```
 
-Manual test plan: register two users, create a channel, join it from a second browser, create a document, open it in both browsers, edit at the same time, verify convergence, save two versions, preview the first, restore it, and verify the restore creates another version. Add a viewer and verify they can read but cannot edit, save, restore, or manage members.
+**Manual test plan:** register two users → create a channel → join from a second browser → create a document → open in both browsers → edit simultaneously → verify convergence → save two versions → preview the first → restore it → verify the restore creates another version → add a viewer → verify they can read but cannot edit, save, restore, or manage members.
 
-## Limitations and future work
+## ⚠️ Limitations & future work
 
-The CRDT remains educational rather than production-grade, awareness is basic, and active CRDTs are in one server's memory. The reference similarity check compares text only with the small corpus bundled in this project; it does not search the web, establish originality, or detect AI-written text. Offline multi-server synchronization, semantic conflict resolution, email service, and large-scale deployment are outside this capstone scope. Future work could add richer reference sources, comments, attachments, offline support, semantic conflict visualization, and multi-server scaling.
+The CRDT is educational rather than production-grade, awareness is basic, and active CRDTs live in one server's memory. The similarity check compares only against the bundled corpus — it is not a web-wide originality or AI-writing detector. Offline multi-server sync, semantic conflict resolution, email, and large-scale deployment are outside the capstone scope. Future work: richer reference sources, comments, attachments, offline support, conflict visualization, and multi-server scaling.
 
-## Viva questions
+<details>
+<summary><strong>🎓 Viva questions (click to expand)</strong></summary>
 
-**What is CRDT?** Conflict-Free Replicated Data Type; it lets replicas modify and merge data so they converge to the same state.
+**What is CRDT?** Conflict-Free Replicated Data Type — replicas modify and merge data so they converge to the same state.
 
-**Why a custom CRDT?** To understand the basic mechanism instead of hiding it behind a ready-made library.
+**Why a custom CRDT?** To understand the mechanism instead of hiding it behind a ready-made library.
 
-**Why Socket.IO?** It provides real-time communication for CRDT operations and awareness events.
+**Why Socket.IO?** Real-time transport for CRDT operations and awareness events.
 
-**Why PostgreSQL?** It stores relational users, channels, memberships, documents, operations, and version history reliably.
+**Why PostgreSQL?** Reliable storage for users, channels, memberships, documents, operations, and version history.
 
-**What happens during simultaneous editing?** Each user creates an operation, replicas apply it, and deterministic ordering makes their visible states converge.
+**What happens during simultaneous editing?** Each user creates an operation; replicas apply it, and deterministic ordering makes visible states converge.
 
-**What is a tombstone?** A deleted node that remains internally so references to its id stay valid.
+**What is a tombstone?** A deleted node kept internally so references to its id stay valid.
 
-**What is version control?** Manual snapshots with an author, timestamp, and message that can be previewed or restored.
+**What is version control here?** Manual snapshots with author, timestamp, and message — previewable and restorable.
 
-**What happens during restore?** The selected content becomes new CRDT operations and a new version; previous versions remain untouched.
+**What happens during restore?** The selected content becomes new CRDT operations and a new version; previous versions stay untouched.
 
-**What is RBAC?** Role-Based Access Control; admin, editor, and viewer roles receive different permissions.
+**What is RBAC?** Role-Based Access Control — admin, editor, and viewer roles with different permissions.
 
-### Editor and AI interaction
+</details>
 
-While an editor types, the live grammar assistant waits briefly for a stable draft and can present an exact-text correction with **Accept** and **Reject** actions. Accept replaces only the matching phrase through the editor change pipeline, while Reject dismisses that suggestion for the current context. Autocomplete remains available as a separate ghost-text flow with explicit Accept/Reject buttons and Tab/Escape controls; it never inserts a completion before acceptance.
+---
 
-Improve Writing presents an original/improved comparison with Accept Changes, Reject, and Regenerate actions. Paraphrase presents up to three independently applicable alternatives. Summaries can be copied, inserted at the saved editor cursor, or dismissed. The **Demo Mode** tab contains clearly labeled sample responses and a separate preview; accepting or rejecting a demo suggestion never edits the real document. Exiting or resetting Demo Mode returns to normal editing.
+<div align="center">
 
-The toolbar now includes text styles, font family/size, bold/italic/underline/strike, text and highlight colors, superscript/subscript, four alignments, bullet/numbered/check lists, indentation, quote/code block, divider, links, tables, line height, image insertion, AI rewrite, and clear formatting.
+**Built as a DBMS capstone project.** Demo screenshots use a private demo channel — sample data only.
 
-The reference similarity panel can compare a document or selection with either the bundled corpus or text pasted by the user. Supplied-text comparisons use a local sentence-level word-similarity calculation and show matching passages and shared terms. It is not a web-wide plagiarism check or an AI-writing detector.
-
-## AI Copilot setup
-
-The editor now includes AI writing assistance on the right rail and a floating AI command bar. The implemented backend routes are:
-
-- `POST /api/ai/autocomplete` — debounced inline continuation (last 500 characters).
-- `POST /api/ai/paraphrase` — three rewrite alternatives for academic, casual, or concise tone.
-- `POST /api/ai/grammar` — grammar, spelling, and clarity suggestions.
-- `GET /api/ai/status` — reports whether local LanguageTool is reachable and whether Gemini is configured; it never returns credentials.
-- `POST /api/ai/summarize` — a concise 2–3 sentence document summary.
-- `POST /api/ai/plagiarism` — local TF-IDF/cosine wording similarity scan against the bundled educational corpus.
-
-The plagiarism route also accepts an optional `referenceText` field (up to 24,000 characters) to compare against supplied reference text locally. Demo Mode uses labeled in-browser examples and makes no provider request.
-
-Set `GEMINI_API_KEY` and optionally `AI_MODEL` in the server `.env` to enable live Gemini responses. LanguageTool is used for ordinary grammar checks when available. If Gemini is not configured or unavailable, the UI reports the provider limitation; summaries may show a clearly labeled extractive preview. Demo Mode is separate and always labels its sample content as simulated.
-
-Gemini-backed writing requests use a per-user rate limit controlled by `AI_REQUESTS_PER_MINUTE` (60 per minute by default). AI outputs are audited in PostgreSQL when the `ai_suggestions` table is available; reference similarity reports are stored in `plagiarism_reports`.
-
-The existing right-side Version History / Collaborators / Operations rail remains intact. The AI Copilot card is placed above it so AI functionality is available without removing the CRDT monitoring panels.
+</div>
