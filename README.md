@@ -180,37 +180,32 @@ npm run build         # frontend production build
 
 **Manual test plan:** register two users → create a channel → join from a second browser → create a document → open in both browsers → edit simultaneously → verify convergence → save two versions → preview the first → restore it → verify the restore creates another version → add a viewer → verify they can read but cannot edit, save, restore, or manage members.
 
+## 🧗 Challenges we faced & how we solved them
+
+**1. Concurrent edits silently overwrote each other.**
+Our first design stored whole documents — two users saving clobbered each other's work. That single bug became the reason the whole project exists.
+**Solved:** we model every keystroke as a CRDT operation with unique ids, tombstones for deletes, and deterministic ordering by operation id — so delivery order can't change the final text. Operations that arrive early wait in `pendingOperations` until their dependencies show up.
+
+**2. The free LanguageTool API rejected our automated requests.**
+Live grammar checking against the public endpoint got rate-limited instantly.
+**Solved:** run LanguageTool locally (`brew services start languagetool`), and if it's unreachable the backend makes exactly **one** Gemini fallback attempt — no retry storms — plus caching for repeated checks and cancellation of stale browser requests.
+
+**3. "Port already in use" wasted hours during development.**
+A forgotten backend process held `:5000` and the team kept starting duplicate servers.
+**Solved:** documented the workflow in the README — detect the existing backend via the `/api/health` endpoint and keep using it instead of spawning another process.
+
+**4. AI features could be spammed and couldn't be audited.**
+Unlimited Gemini calls from any user was a cost and abuse risk.
+**Solved:** per-user rate limiting (`AI_REQUESTS_PER_MINUTE`, 60/min default) and every AI output recorded in an `ai_suggestions` PostgreSQL table; similarity reports land in `plagiarism_reports`.
+
+**5. Demo data kept getting mixed into real documents.**
+Showing off features to reviewers meant typing sample text into real docs.
+**Solved:** a clearly separated **Demo Mode** tab with labeled simulated responses ("NOT A LIVE AI RESULT") — accepting or rejecting demo suggestions can never edit the real document.
+
+**6. Restoring a version destroyed history.**
+Our first restore replaced the document in place, so you could never get back.
+**Solved:** restore now converts the old content into *new* CRDT operations and saves it as a **new version** — previous versions stay untouched, giving you an append-only audit trail.
+
 ## ⚠️ Limitations & future work
 
 The CRDT is educational rather than production-grade, awareness is basic, and active CRDTs live in one server's memory. The similarity check compares only against the bundled corpus — it is not a web-wide originality or AI-writing detector. Offline multi-server sync, semantic conflict resolution, email, and large-scale deployment are outside the capstone scope. Future work: richer reference sources, comments, attachments, offline support, conflict visualization, and multi-server scaling.
-
-<details>
-<summary><strong>🎓 Viva questions (click to expand)</strong></summary>
-
-**What is CRDT?** Conflict-Free Replicated Data Type — replicas modify and merge data so they converge to the same state.
-
-**Why a custom CRDT?** To understand the mechanism instead of hiding it behind a ready-made library.
-
-**Why Socket.IO?** Real-time transport for CRDT operations and awareness events.
-
-**Why PostgreSQL?** Reliable storage for users, channels, memberships, documents, operations, and version history.
-
-**What happens during simultaneous editing?** Each user creates an operation; replicas apply it, and deterministic ordering makes visible states converge.
-
-**What is a tombstone?** A deleted node kept internally so references to its id stay valid.
-
-**What is version control here?** Manual snapshots with author, timestamp, and message — previewable and restorable.
-
-**What happens during restore?** The selected content becomes new CRDT operations and a new version; previous versions stay untouched.
-
-**What is RBAC?** Role-Based Access Control — admin, editor, and viewer roles with different permissions.
-
-</details>
-
----
-
-<div align="center">
-
-**Built as a DBMS capstone project.** Demo screenshots use a private demo channel — sample data only.
-
-</div>
